@@ -40,6 +40,16 @@ const GOBLIN_SPEED = 5.2
 const GOBLIN_HEALTH = 28
 const GOBLIN_ATTACK_RANGE = 1.1
 const MAX_GOBLINS = 1
+// Huge green orc: roaming boss with weak spots, knockdowns, club attacks,
+// and a close-range grab/throw move.
+const ORC_SPEED = 2.45
+const ORC_HEALTH = 520
+const ORC_CLUB_DAMAGE = 24
+const ORC_ATTACK_RANGE = 2.9
+const ORC_GRAB_RANGE = 1.75
+const ORC_GRAB_DAMAGE = 30
+const ORC_GRAB_COOLDOWN = 30
+const MAX_ORCS = 1
 
 type ChunkData = {
   cx: number
@@ -88,6 +98,7 @@ type Vampire = {
 }
 
 type GoblinPhase = 'approach' | 'grabbing' | 'fleeing'
+type GoblinBackpack = { items: { id: ItemId; count: number }[]; mesh: THREE.Object3D }
 
 type Goblin = {
   mesh: THREE.Group
@@ -99,7 +110,9 @@ type Goblin = {
   fleeDir: THREE.Vector2
   grabTimer: number
   stolen: { id: ItemId; count: number } | null
-  // Little sack mesh we parent to the goblin once they've stolen something.
+  // Backpack system: stolen stacks live here and are dropped back on death.
+  backpack: GoblinBackpack
+  // Legacy visible sack, retained as an extra loot-full tell.
   sack?: THREE.Object3D
   armL: THREE.Object3D
   armR: THREE.Object3D
@@ -107,6 +120,31 @@ type Goblin = {
   legR: THREE.Object3D
   body: THREE.Object3D
   walkPhase: number
+}
+
+type OrcState = 'walking' | 'roaring' | 'down' | 'gettingUp' | 'dying'
+type OrcWeakSpot = { mesh: THREE.Object3D; name: string; active: boolean }
+
+type OrcBoss = {
+  mesh: THREE.Group
+  pos: THREE.Vector3
+  vel: THREE.Vector3
+  hp: number
+  state: OrcState
+  stateTimer: number
+  attackTimer: number
+  grabCooldown: number
+  hurtTimer: number
+  walkPhase: number
+  weakSpots: OrcWeakSpot[]
+  body: THREE.Object3D
+  head: THREE.Object3D
+  jaw: THREE.Object3D
+  armL: THREE.Object3D
+  armR: THREE.Object3D
+  legL: THREE.Object3D
+  legR: THREE.Object3D
+  club: THREE.Object3D
 }
 
 type StructureMesh = {
@@ -1437,6 +1475,22 @@ export default function GameCanvas() {
       legRMesh.castShadow = true
       legRGroup.add(legRMesh)
 
+      // A permanent little backpack that visually bulges as stolen loot is added.
+      const backpackGroup = new THREE.Group()
+      backpackGroup.position.set(0, 0.72, -0.24)
+      const backpackMat = new THREE.MeshStandardMaterial({ color: 0x6b451f, roughness: 0.95, metalness: 0 })
+      const backpackBody = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.16), backpackMat)
+      backpackBody.castShadow = true
+      backpackGroup.add(backpackBody)
+      const flap = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.175), new THREE.MeshStandardMaterial({ color: 0x3b2410, roughness: 1 }))
+      flap.position.y = 0.17
+      backpackGroup.add(flap)
+      const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.43, 0.03), new THREE.MeshStandardMaterial({ color: 0x201007, roughness: 1 }))
+      strapL.position.set(0.12, 0, 0.095)
+      backpackGroup.add(strapL)
+      const strapR = strapL.clone(); strapR.position.x = -0.12; backpackGroup.add(strapR)
+      g.add(backpackGroup)
+
       g.position.set(x, y, z)
       scene.add(g)
       return {
@@ -1449,6 +1503,7 @@ export default function GameCanvas() {
         fleeDir: new THREE.Vector2(),
         grabTimer: 0,
         stolen: null,
+        backpack: { items: [], mesh: backpackGroup },
         armL: armLGroup,
         armR: armRGroup,
         legL: legLGroup,
@@ -1461,6 +1516,54 @@ export default function GameCanvas() {
     function removeGoblin(g: Goblin) {
       scene.remove(g.mesh)
       g.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
+    }
+
+    function addToGoblinBackpack(g: Goblin, id: ItemId, count: number) {
+      const existing = g.backpack.items.find(item => item.id === id)
+      if (existing) existing.count += count
+      else g.backpack.items.push({ id, count })
+      const total = g.backpack.items.reduce((sum, item) => sum + item.count, 0)
+      const bulge = Math.min(0.32, total * 0.045)
+      g.backpack.mesh.scale.set(1 + bulge, 1 + bulge * 0.65, 1 + bulge)
+    }
+
+    function dropGoblinBackpack(g: Goblin) {
+      if (g.backpack.items.length === 0) return 0
+      let offset = 0
+      for (const item of g.backpack.items) {
+        dropItemToWorld(item.id, item.count, g.pos.x + offset, g.pos.y + 0.55, g.pos.z - offset)
+        offset += 0.25
+      }
+      return g.backpack.items.reduce((sum, item) => sum + item.count, 0)
+    }
+
+    function findGoblinHit(ray: THREE.Raycaster) {
+      let best: { goblin: Goblin; distance: number } | null = null
+      const rayOrigin = ray.ray.origin
+      const rayDir = ray.ray.direction
+      for (const gb of goblins) {
+        const meshHits = ray.intersectObject(gb.mesh, true)
+        if (meshHits.length && meshHits[0].distance < REACH) {
+          if (!best || meshHits[0].distance < best.distance) best = { goblin: gb, distance: meshHits[0].distance }
+          continue
+        }
+
+        // Fallback capsule-style hit test for the tiny, fast goblin. The old
+        // pure mesh raycast was unforgiving because the goblin is below the
+        // player's eye-line; this generous capsule makes center-crosshair hits
+        // register reliably without letting players hit through long distances.
+        const capsuleCenter = new THREE.Vector3(gb.pos.x, gb.pos.y + 0.72, gb.pos.z)
+        const toCenter = new THREE.Vector3().subVectors(capsuleCenter, rayOrigin)
+        const along = toCenter.dot(rayDir)
+        if (along < 0 || along > REACH + 0.4) continue
+        const closest = new THREE.Vector3().copy(rayOrigin).addScaledVector(rayDir, along)
+        const miss = closest.distanceTo(capsuleCenter)
+        const horizontalDist = Math.hypot(gb.pos.x - playerPos.x, gb.pos.z - playerPos.z)
+        if (miss <= 0.78 && horizontalDist <= REACH + 0.9) {
+          if (!best || along < best.distance) best = { goblin: gb, distance: along }
+        }
+      }
+      return best
     }
 
     // --- Vampires (boss-class night enemies) ---
@@ -1607,6 +1710,169 @@ export default function GameCanvas() {
       const v = createVampire(x, y, z)
       vampires.push(v)
       useGame.getState().showToast('🦇 A vampire stalks you...')
+    }
+
+    // --- Huge Green Orc Boss ---
+    const orcs: OrcBoss[] = []
+
+    function createOrc(x: number, y: number, z: number): OrcBoss {
+      const g = new THREE.Group()
+      const skinMat = new THREE.MeshStandardMaterial({ color: 0x2f8f34, roughness: 0.82, metalness: 0 })
+      const darkSkinMat = new THREE.MeshStandardMaterial({ color: 0x1f6126, roughness: 0.95, metalness: 0 })
+      const leatherMat = new THREE.MeshStandardMaterial({ color: 0x4b2e17, roughness: 0.9, metalness: 0 })
+      const toothMat = new THREE.MeshStandardMaterial({ color: 0xf4edcf, roughness: 0.5, metalness: 0 })
+      const weakMat = new THREE.MeshBasicMaterial({ color: 0xff3b1f })
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x6a401c, roughness: 0.85, metalness: 0 })
+      const spikeMat = new THREE.MeshStandardMaterial({ color: 0x38220f, roughness: 0.8, metalness: 0 })
+
+      const bodyGroup = new THREE.Group()
+      bodyGroup.position.y = 1.75
+      g.add(bodyGroup)
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.05, 2.1, 14), skinMat)
+      torso.castShadow = true
+      bodyGroup.add(torso)
+      const belly = new THREE.Mesh(new THREE.SphereGeometry(0.78, 16, 10), darkSkinMat)
+      belly.position.set(0, -0.25, 0.18)
+      belly.scale.set(1.05, 0.8, 0.42)
+      belly.castShadow = true
+      bodyGroup.add(belly)
+      const belt = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.18, 1.15), leatherMat)
+      belt.position.y = -0.95
+      bodyGroup.add(belt)
+
+      const headGroup = new THREE.Group()
+      headGroup.position.y = 3.05
+      g.add(headGroup)
+      const head = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.95, 1.05), skinMat)
+      head.castShadow = true
+      headGroup.add(head)
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.16, 0.12), darkSkinMat)
+      brow.position.set(0, 0.16, 0.57)
+      headGroup.add(brow)
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xfff066 })
+      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 8), eyeMat)
+      eyeL.position.set(0.28, 0.06, 0.58)
+      headGroup.add(eyeL)
+      const eyeR = eyeL.clone(); eyeR.position.x = -0.28; headGroup.add(eyeR)
+      const jawGroup = new THREE.Group()
+      jawGroup.position.set(0, -0.22, 0.56)
+      headGroup.add(jawGroup)
+      const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.22, 0.12), darkSkinMat)
+      jawGroup.add(jaw)
+      const tuskL = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.32, 8), toothMat)
+      tuskL.position.set(0.24, -0.12, 0.06)
+      tuskL.rotation.x = Math.PI
+      jawGroup.add(tuskL)
+      const tuskR = tuskL.clone(); tuskR.position.x = -0.24; jawGroup.add(tuskR)
+
+      const armLGroup = new THREE.Group(); armLGroup.position.set(0.92, 2.55, 0); g.add(armLGroup)
+      const armRGroup = new THREE.Group(); armRGroup.position.set(-0.92, 2.55, 0); g.add(armRGroup)
+      const armGeo = new THREE.CylinderGeometry(0.22, 0.28, 1.65, 10)
+      const armL = new THREE.Mesh(armGeo, skinMat); armL.position.y = -0.78; armL.castShadow = true; armLGroup.add(armL)
+      const armR = new THREE.Mesh(armGeo, skinMat); armR.position.y = -0.78; armR.castShadow = true; armRGroup.add(armR)
+      const clubGroup = new THREE.Group()
+      clubGroup.position.set(0, -1.25, 0.1)
+      armRGroup.add(clubGroup)
+      const clubHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.45, 9), woodMat)
+      clubHandle.rotation.x = 0.22
+      clubGroup.add(clubHandle)
+      const clubHead = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.32, 0.95, 9), woodMat)
+      clubHead.position.y = -0.82
+      clubHead.castShadow = true
+      clubGroup.add(clubHead)
+      for (let i = 0; i < 6; i++) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.22, 6), spikeMat)
+        const a = (i / 6) * Math.PI * 2
+        spike.position.set(Math.cos(a) * 0.28, -0.82 + (i % 3 - 1) * 0.18, Math.sin(a) * 0.28)
+        spike.lookAt(new THREE.Vector3(Math.cos(a), spike.position.y, Math.sin(a)))
+        clubGroup.add(spike)
+      }
+
+      const legLGroup = new THREE.Group(); legLGroup.position.set(0.43, 0.95, 0); g.add(legLGroup)
+      const legRGroup = new THREE.Group(); legRGroup.position.set(-0.43, 0.95, 0); g.add(legRGroup)
+      const legGeo = new THREE.CylinderGeometry(0.26, 0.34, 1.65, 10)
+      const legL = new THREE.Mesh(legGeo, darkSkinMat); legL.position.y = -0.8; legL.castShadow = true; legLGroup.add(legL)
+      const legR = new THREE.Mesh(legGeo, darkSkinMat); legR.position.y = -0.8; legR.castShadow = true; legRGroup.add(legR)
+
+      const weakSpots: OrcWeakSpot[] = []
+      const makeWeakSpot = (name: string, parent: THREE.Object3D, px: number, py: number, pz: number, scale = 1) => {
+        const spot = new THREE.Mesh(new THREE.SphereGeometry(0.13 * scale, 12, 8), weakMat)
+        spot.position.set(px, py, pz)
+        spot.userData.orcWeakSpot = name
+        parent.add(spot)
+        weakSpots.push({ mesh: spot, name, active: true })
+      }
+      makeWeakSpot('head', headGroup, 0, 0.12, 0.63, 1.1)
+      makeWeakSpot('heart', bodyGroup, 0.26, 0.28, 0.78, 1.15)
+      makeWeakSpot('left knee', legLGroup, 0, -0.55, 0.28, 0.9)
+      makeWeakSpot('right knee', legRGroup, 0, -0.55, 0.28, 0.9)
+
+      const aura = new THREE.PointLight(0x39ff45, 1.4, 8, 2)
+      aura.position.set(0, 2.4, 0)
+      g.add(aura)
+      g.position.set(x, y, z)
+      scene.add(g)
+      return {
+        mesh: g,
+        pos: new THREE.Vector3(x, y, z),
+        vel: new THREE.Vector3(),
+        hp: ORC_HEALTH,
+        state: 'roaring',
+        stateTimer: 2.2,
+        attackTimer: 1.2,
+        grabCooldown: 8,
+        hurtTimer: 0,
+        walkPhase: Math.random() * Math.PI * 2,
+        weakSpots,
+        body: bodyGroup,
+        head: headGroup,
+        jaw: jawGroup,
+        armL: armLGroup,
+        armR: armRGroup,
+        legL: legLGroup,
+        legR: legRGroup,
+        club: clubGroup,
+      }
+    }
+
+    function removeOrc(o: OrcBoss) {
+      scene.remove(o.mesh)
+      o.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
+    }
+
+    function spawnOrc() {
+      if (orcs.length >= MAX_ORCS) return
+      const angle = Math.random() * Math.PI * 2
+      const dist = 70 + Math.random() * 18
+      const x = playerPos.x + Math.cos(angle) * dist
+      const z = playerPos.z + Math.sin(angle) * dist
+      const y = heightAt(x, z)
+      orcs.push(createOrc(x, y, z))
+      useGame.getState().showToast('👹 A huge green orc boss roars in the distance!')
+    }
+
+    function knockDownOrc(o: OrcBoss, reason = 'weak spot') {
+      if (o.state === 'down' || o.state === 'dying') return
+      o.state = 'down'
+      o.stateTimer = 5.2
+      o.vel.set(0, 0, 0)
+      o.mesh.rotation.z = 1.22
+      o.mesh.position.y = o.pos.y + 0.35
+      useGame.getState().showToast(`💥 Orc ${reason} hit! It crashes down — strike now!`)
+    }
+
+    function damageOrc(o: OrcBoss, amount: number, weak = false) {
+      if (o.state === 'dying') return
+      const finalDamage = o.state === 'down' ? amount * 1.55 : weak ? amount * 1.25 : amount
+      o.hp -= finalDamage
+      o.hurtTimer = 0.22
+      if (weak) knockDownOrc(o)
+      if (o.hp <= 0) {
+        o.state = 'dying'
+        o.stateTimer = 2.1
+        o.vel.set(0, 0, 0)
+        useGame.getState().showToast('👑 The huge orc boss is falling!')
+      }
     }
 
     // Build a small bat that replaces the vampire when dawn breaks.
@@ -2612,6 +2878,8 @@ export default function GameCanvas() {
     let wasNight = false
     let zombieSpawnTimer = 3
     let vampireSpawnTimer = 30
+    // Orc boss is rare, but guaranteed to appear after the world has been alive a while.
+    let orcSpawnTimer = 140 + Math.random() * 90
     // Goblin first sighting happens a few minutes in; respawns are even rarer.
     let goblinSpawnTimer = 180 + Math.random() * 120
     let bob = 0
@@ -3509,6 +3777,151 @@ export default function GameCanvas() {
           }
         }
 
+        // --- Huge Orc boss spawning & AI ---
+        orcSpawnTimer -= dt
+        if (orcSpawnTimer <= 0) {
+          orcSpawnTimer = 360 + Math.random() * 240
+          spawnOrc()
+        }
+        for (let i = orcs.length - 1; i >= 0; i--) {
+          const o = orcs[i]
+          const toPlayer = new THREE.Vector3().subVectors(playerPos, o.pos)
+          toPlayer.y = 0
+          const dist = toPlayer.length()
+          if (dist > 0.001) toPlayer.normalize()
+
+          o.attackTimer -= dt
+          o.grabCooldown -= dt
+          o.stateTimer -= dt
+
+          if (o.state === 'dying') {
+            const p = Math.max(0, 1 - o.stateTimer / 2.1)
+            o.mesh.rotation.z = p * 1.45
+            o.mesh.rotation.x = -p * 0.45
+            o.mesh.position.y = o.pos.y + Math.sin(p * Math.PI) * 0.55
+            o.armR.rotation.x = -1.8 + p * 1.5
+            o.armL.rotation.x = -0.6 + p * 1.4
+            if (o.stateTimer <= 0) {
+              const px = o.pos.x, py = o.pos.y, pz = o.pos.z
+              removeOrc(o)
+              orcs.splice(i, 1)
+              state.addXp(350)
+              state.addZombieKill()
+              state.showToast('👑 Huge Orc defeated! +350 XP')
+              dropItemToWorld('wood', 10, px, py + 0.7, pz)
+              dropItemToWorld('raw_iron', 4, px + 0.5, py + 0.7, pz)
+            }
+            continue
+          }
+
+          if (o.state === 'down') {
+            o.vel.set(0, 0, 0)
+            o.mesh.rotation.z = 1.22 + Math.sin(performance.now() * 0.009) * 0.03
+            o.armR.rotation.x = -0.25
+            o.armL.rotation.x = 0.35
+            o.legL.rotation.x = 0.4
+            o.legR.rotation.x = -0.25
+            o.jaw.rotation.x = 0.35
+            if (o.stateTimer <= 0) {
+              o.state = 'gettingUp'
+              o.stateTimer = 1.4
+            }
+          } else if (o.state === 'gettingUp') {
+            const p = 1 - Math.max(0, o.stateTimer / 1.4)
+            o.mesh.rotation.z = (1 - p) * 1.22
+            o.mesh.position.y = o.pos.y + (1 - p) * 0.35
+            o.jaw.rotation.x = 0.1
+            if (o.stateTimer <= 0) {
+              o.state = 'roaring'
+              o.stateTimer = 1.2
+              o.mesh.rotation.set(0, o.mesh.rotation.y, 0)
+            }
+          } else if (o.state === 'roaring') {
+            o.vel.set(0, 0, 0)
+            o.mesh.rotation.y = Math.atan2(playerPos.x - o.pos.x, playerPos.z - o.pos.z)
+            const roar = Math.sin(performance.now() * 0.018)
+            o.body.position.y = 1.75 + Math.abs(roar) * 0.08
+            o.head.rotation.x = -0.12 + roar * 0.08
+            o.jaw.rotation.x = 0.55 + Math.abs(roar) * 0.18
+            o.armL.rotation.x = -1.1 + roar * 0.18
+            o.armR.rotation.x = -1.2 - roar * 0.18
+            if (o.stateTimer <= 0) o.state = 'walking'
+          } else {
+            const ORC_STANDOFF = 2.15
+            const speedScale = dist > ORC_STANDOFF ? 1 : Math.max(0, (dist - 1.55) / 0.6)
+            o.vel.x = toPlayer.x * ORC_SPEED * speedScale
+            o.vel.z = toPlayer.z * ORC_SPEED * speedScale
+            o.pos.x += o.vel.x * dt
+            o.pos.z += o.vel.z * dt
+            collideEnemy(o.pos, 0.95)
+            const od = Math.sqrt((playerPos.x - o.pos.x) ** 2 + (playerPos.z - o.pos.z) ** 2)
+            if (od < ORC_STANDOFF && od > 0.001) {
+              const k = ORC_STANDOFF / od
+              o.pos.x = playerPos.x - (playerPos.x - o.pos.x) * k
+              o.pos.z = playerPos.z - (playerPos.z - o.pos.z) * k
+            }
+            o.pos.y = heightAt(o.pos.x, o.pos.z)
+            o.mesh.position.copy(o.pos)
+            o.mesh.rotation.y = Math.atan2(playerPos.x - o.pos.x, playerPos.z - o.pos.z)
+
+            const spd = Math.sqrt(o.vel.x * o.vel.x + o.vel.z * o.vel.z)
+            if (spd > 0.05) o.walkPhase += spd * dt * 1.9
+            const swing = Math.sin(o.walkPhase) * Math.min(spd / ORC_SPEED, 1)
+            o.legL.rotation.x = swing * 0.55
+            o.legR.rotation.x = -swing * 0.55
+            o.armL.rotation.x = -swing * 0.42
+            o.armR.rotation.x = -0.45 + swing * 0.38
+            o.club.rotation.z = Math.sin(o.walkPhase + 0.5) * 0.12
+            o.body.position.y = 1.75 + Math.abs(swing) * 0.06
+            o.body.rotation.z = swing * 0.035
+            o.head.rotation.y = Math.sin(o.walkPhase * 0.5) * 0.07
+            o.jaw.rotation.x = 0.04
+
+            if (dist < ORC_GRAB_RANGE && o.grabCooldown <= 0) {
+              o.grabCooldown = ORC_GRAB_COOLDOWN
+              o.attackTimer = 1.6
+              state.takeDamage(ORC_GRAB_DAMAGE)
+              const away = new THREE.Vector3().subVectors(playerPos, o.pos)
+              away.y = 0
+              if (away.lengthSq() < 0.001) away.set(1, 0, 0)
+              away.normalize()
+              playerVel.x += away.x * 13
+              playerVel.z += away.z * 13
+              playerVel.y = Math.max(playerVel.y, 8)
+              o.state = 'roaring'
+              o.stateTimer = 1.05
+              state.showToast('👹 The orc grabs and throws you! -30 HP')
+            } else if (dist < ORC_ATTACK_RANGE && o.attackTimer <= 0) {
+              o.attackTimer = 2.0
+              state.takeDamage(ORC_CLUB_DAMAGE)
+              o.armR.rotation.x = -2.2
+              o.club.rotation.x = -0.8
+              state.showToast('🪵 Orc club smash!')
+            }
+          }
+
+          // Weak spots pulse to make the knockdown mechanic readable.
+          const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.18
+          for (const ws of o.weakSpots) ws.mesh.scale.setScalar(pulse)
+          if (o.hurtTimer > 0) {
+            o.hurtTimer -= dt
+            o.mesh.scale.setScalar(1 + Math.sin(o.hurtTimer * 30) * 0.035)
+          } else {
+            o.mesh.scale.setScalar(1)
+          }
+
+          // spike trap chip damage only; boss should not be trivialized by traps.
+          for (const st of state.structures) {
+            if (st.kind !== 'spike_trap') continue
+            const dx = o.pos.x - st.x
+            const dzd = o.pos.z - st.z
+            if (dx * dx + dzd * dzd < 1.15) {
+              damageOrc(o, 8 * dt)
+              break
+            }
+          }
+        }
+
         // --- Goblin spawning & AI ---
         // Goblins appear at any time of day, sprint in, steal one inventory
         // stack, then bolt. Kill before they escape to recover the loot.
@@ -3567,7 +3980,8 @@ export default function GameCanvas() {
                   const takeCount = Math.min(slot.count, 1 + Math.floor(Math.random() * 3))
                   stState.removeItem(slot.id, takeCount)
                   gb.stolen = { id: slot.id, count: takeCount }
-                  stState.showToast(`🟢 A goblin snatched ${takeCount}× ${ITEMS[slot.id].name}!`)
+                  addToGoblinBackpack(gb, slot.id, takeCount)
+                  stState.showToast(`🟢 A goblin packed ${takeCount}× ${ITEMS[slot.id].name} into its backpack!`)
                   // Give the goblin a visible sack
                   const sackMat = new THREE.MeshLambertMaterial({ color: 0x7a5a2a })
                   const sack = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.2), sackMat)
@@ -3651,10 +4065,9 @@ export default function GameCanvas() {
           }
           // death: drop stolen loot + small XP
           if (gb.hp <= 0) {
-            const dx0 = gb.pos.x, dy0 = gb.pos.y, dz0 = gb.pos.z
-            if (gb.stolen) {
-              dropItemToWorld(gb.stolen.id, gb.stolen.count, dx0, dy0 + 0.5, dz0)
-              useGame.getState().showToast(`💰 Goblin slain! Dropped ${gb.stolen.count}× ${ITEMS[gb.stolen.id].name}`)
+            const dropped = dropGoblinBackpack(gb)
+            if (dropped > 0) {
+              useGame.getState().showToast(`💰 Goblin slain! Backpack dropped ${dropped} stolen item${dropped === 1 ? '' : 's'}`)
             } else {
               useGame.getState().showToast('💰 Goblin slain!')
             }
@@ -3702,7 +4115,16 @@ export default function GameCanvas() {
             const d = Math.sqrt(dx * dx + dz * dz)
             if (d < bestD) { bestD = d; best = { name: 'Goblin', hp: gb.hp, maxHp: GOBLIN_HEALTH, dist: d, kind: 'goblin' } }
           }
+          let boss: { name: string; hp: number; maxHp: number; dist: number; kind: string; state?: string; grabCooldown?: number } | null = null
+          for (const o of orcs) {
+            const dx = o.pos.x - playerPos.x
+            const dz = o.pos.z - playerPos.z
+            const d = Math.sqrt(dx * dx + dz * dz)
+            if (!boss || d < boss.dist) boss = { name: 'Huge Green Orc', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc', state: o.state, grabCooldown: Math.max(0, o.grabCooldown) }
+            if (d < 40) best = { name: 'Huge Green Orc', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc' }
+          }
           ;(window as any).__nightfall_nearestEnemy = best
+          ;(window as any).__nightfall_boss = boss
         }
 
         // Flag whether the player is standing near any furnace so the
@@ -3986,26 +4408,45 @@ export default function GameCanvas() {
         }
       }
 
-      // Check goblins — quick little thieves, low HP
-      const gobHits: THREE.Intersection[] = []
-      for (const gb of goblins) {
-        const hits = raycaster.intersectObject(gb.mesh, true)
-        if (hits.length && hits[0].distance < REACH) {
-          gobHits.push({ ...hits[0], object: gb.mesh as any })
+      // Check huge orc boss, including weak spots that knock it down.
+      const orcHits: { orc: OrcBoss; hit: THREE.Intersection; weak: boolean }[] = []
+      for (const o of orcs) {
+        const hits = raycaster.intersectObject(o.mesh, true)
+        if (hits.length && hits[0].distance < REACH + 1.2) {
+          const weak = !!(hits[0].object as any).userData?.orcWeakSpot
+          orcHits.push({ orc: o, hit: hits[0], weak })
+        } else {
+          // Big-body fallback so the boss never feels unhittable when close.
+          const center = new THREE.Vector3(o.pos.x, o.pos.y + 1.8, o.pos.z)
+          const toCenter = new THREE.Vector3().subVectors(center, raycaster.ray.origin)
+          const along = toCenter.dot(raycaster.ray.direction)
+          if (along > 0 && along < REACH + 1.2) {
+            const closest = new THREE.Vector3().copy(raycaster.ray.origin).addScaledVector(raycaster.ray.direction, along)
+            if (closest.distanceTo(center) < 1.15) {
+              orcHits.push({ orc: o, hit: { distance: along, object: o.mesh } as unknown as THREE.Intersection, weak: false })
+            }
+          }
         }
       }
-      gobHits.sort((a, b) => a.distance - b.distance)
-      if (gobHits.length > 0) {
-        const hitMesh = gobHits[0].object
-        const gb = goblins.find(g => g.mesh === hitMesh)
+      orcHits.sort((a, b) => a.hit.distance - b.hit.distance)
+      if (orcHits.length > 0) {
+        const target = orcHits[0]
+        damageOrc(target.orc, dmg, target.weak)
+        return
+      }
+
+      // Check goblins — quick little thieves, low HP. Uses a forgiving capsule
+      // fallback so hits on the small sprinting model register consistently.
+      const gobHit = findGoblinHit(raycaster)
+      if (gobHit) {
+        const gb = gobHit.goblin
         if (gb) {
           gb.hp -= dmg
           gb.hurtTimer = 0.2
           if (gb.hp <= 0) {
-            const px = gb.pos.x, py = gb.pos.y, pz = gb.pos.z
-            if (gb.stolen) {
-              dropItemToWorld(gb.stolen.id, gb.stolen.count, px, py + 0.5, pz)
-              useGame.getState().showToast(`💰 Goblin slain! Dropped ${gb.stolen.count}× ${ITEMS[gb.stolen.id].name}`)
+            const dropped = dropGoblinBackpack(gb)
+            if (dropped > 0) {
+              useGame.getState().showToast(`💰 Goblin slain! Backpack dropped ${dropped} stolen item${dropped === 1 ? '' : 's'}`)
             } else {
               useGame.getState().showToast('💰 Goblin slain!')
             }
@@ -4389,10 +4830,13 @@ export default function GameCanvas() {
       zombies.length = 0
       for (const v of vampires) removeVampire(v)
       vampires.length = 0
+      for (const o of orcs) removeOrc(o)
+      orcs.length = 0
       for (const gb of goblins) removeGoblin(gb)
       goblins.length = 0
       try {
         delete (window as any).__nightfall_nearestEnemy
+        delete (window as any).__nightfall_boss
         delete (window as any).__nightfall_phase
         delete (window as any).__nightfall_nearFurnace
         delete (window as any).__nightfallRequestLock

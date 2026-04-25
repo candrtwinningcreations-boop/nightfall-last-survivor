@@ -305,9 +305,9 @@ export default function PlayClient() {
         <DeathPanel onRespawn={() => { respawn(); showToast('You rise again.') }} />
       )}
 
-      {/* Server/player indicator (top-right) */}
+      {/* Server/player indicator (top-left, opposite the level bar) */}
       {loaded && (mode === 'play' || mode === 'build') && (
-        <div className="absolute top-3 right-3 z-40 flex items-center gap-2 text-xs">
+        <div className="absolute top-3 left-3 z-40 flex items-center gap-2 text-xs">
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-black/60 text-white backdrop-blur-sm border border-white/10 font-mono">
             <Users className="w-3.5 h-3.5 text-amber-400" />
             <span className="truncate max-w-[160px]">{serverName}</span>

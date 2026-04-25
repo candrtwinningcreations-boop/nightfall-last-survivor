@@ -34,12 +34,15 @@ export default function Hud() {
   // Day/night countdown + nearest-enemy health bar, polled from the game loop.
   const [phaseInfo, setPhaseInfo] = useState<{ phase: 'day' | 'night'; secondsLeft: number } | null>(null)
   const [nearestEnemy, setNearestEnemy] = useState<{ name: string; hp: number; maxHp: number; dist: number; kind: string } | null>(null)
+  const [boss, setBoss] = useState<{ name: string; hp: number; maxHp: number; dist: number; kind: string; state?: string; grabCooldown?: number } | null>(null)
   useEffect(() => {
     const id = window.setInterval(() => {
       const p = (window as any).__nightfall_phase
       if (p) setPhaseInfo({ phase: p.phase, secondsLeft: p.secondsLeft })
       const ne = (window as any).__nightfall_nearestEnemy
       setNearestEnemy(ne ?? null)
+      const b = (window as any).__nightfall_boss
+      setBoss(b ?? null)
     }, 200)
     return () => window.clearInterval(id)
   }, [])
@@ -118,8 +121,38 @@ export default function Hud() {
         )}
       </div>
 
+      {/* Huge boss bar for the orc — persistent while the boss exists */}
+      {boss && boss.kind === 'orc' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 pointer-events-none w-[min(720px,86vw)]">
+          <div className="px-5 py-3 rounded-xl bg-black/75 backdrop-blur-sm border border-lime-400/35 shadow-[0_0_42px_-12px_rgba(132,204,22,0.75)]">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-white">
+                <Skull className="w-5 h-5 text-lime-300" />
+                <span className="font-display text-lg font-extrabold uppercase tracking-widest text-lime-100">{boss.name}</span>
+                {boss.state && <span className="text-[10px] px-2 py-0.5 rounded-full bg-lime-400/15 border border-lime-400/25 text-lime-200 uppercase tracking-widest">{boss.state}</span>}
+              </div>
+              <div className="text-right text-[10px] font-mono text-zinc-300">
+                <div>{Math.round(boss.dist)}m</div>
+                {typeof boss.grabCooldown === 'number' && boss.grabCooldown > 0 && <div className="text-amber-300">Throw CD {Math.ceil(boss.grabCooldown)}s</div>}
+              </div>
+            </div>
+            <div className="relative h-5 rounded-full bg-red-950/80 border border-white/10 overflow-hidden">
+              <div
+                className="absolute inset-y-0 left-0 bg-gradient-to-r from-lime-700 via-lime-500 to-yellow-300 transition-all duration-150"
+                style={{ width: `${Math.max(0, Math.min(100, (boss.hp / boss.maxHp) * 100))}%` }}
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[length:10%_100%]" />
+            </div>
+            <div className="flex items-center justify-between mt-1 text-[10px] font-mono">
+              <span className="text-lime-200">Hit glowing weak spots to knock the orc down</span>
+              <span className="text-lime-100">{Math.max(0, Math.ceil(boss.hp))}/{Math.round(boss.maxHp)} HP</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Enemy focus bar — only shown while a hostile is within range */}
-      {nearestEnemy && (
+      {nearestEnemy && (!boss || nearestEnemy.kind !== 'orc') && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 pointer-events-none">
           <div className="min-w-[280px] max-w-[360px] px-4 py-2 rounded-lg bg-black/70 backdrop-blur-sm border border-red-500/30 shadow-[0_0_30px_-10px_rgba(239,68,68,0.5)]">
             <div className="flex items-center justify-between mb-1">
