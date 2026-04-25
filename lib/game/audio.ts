@@ -1,6 +1,6 @@
 'use client'
 
-// Procedural game audio: day/night ambience + vampire voice.
+// Procedural game audio: day/night ambience only.
 // All sounds are synthesized live via the Web Audio API — no external audio
 // files are required, so nothing needs to ship with the app.
 
@@ -8,13 +8,10 @@ class GameAudio {
   ctx: AudioContext | null = null
   master: GainNode | null = null
   ambientGain: GainNode | null = null
-  vampireGain: GainNode | null = null
   private dayInterval: ReturnType<typeof setInterval> | null = null
   private nightInterval: ReturnType<typeof setInterval> | null = null
-  private vampireInterval: ReturnType<typeof setInterval> | null = null
   // Sentinel value so the first update() always triggers refreshAmbience
   private isNight: boolean | null = null
-  private vampireDistance: number | null = null // null = no vampire nearby
   private started = false
 
   // Create the audio context on the first user interaction.
@@ -32,10 +29,6 @@ class GameAudio {
       this.ambientGain.gain.value = 0.5
       this.ambientGain.connect(this.master)
 
-      this.vampireGain = this.ctx.createGain()
-      this.vampireGain.gain.value = 0
-      this.vampireGain.connect(this.master)
-
       this.started = true
     } catch {
       this.ctx = null
@@ -46,9 +39,10 @@ class GameAudio {
     if (this.master) this.master.gain.value = Math.max(0, Math.min(1, v))
   }
 
-  // Call from the render loop. `isNight` drives ambience, `vampireDist` drives
-  // vampire volume (null or very far -> silent).
-  update(isNight: boolean, vampireDist: number | null) {
+  // Call from the render loop. `isNight` drives ambience.  Vampire whispers
+  // and drones were intentionally removed so vampires are visually scary
+  // without adding repetitive noise.
+  update(isNight: boolean, _vampireDist: number | null) {
     if (!this.started || !this.ctx) return
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {})
@@ -57,22 +51,11 @@ class GameAudio {
       this.isNight = isNight
       this.refreshAmbience()
     }
-    this.vampireDistance = vampireDist
-    // Vampire gain: distance-based (1/(d+1) curve, 0 at 60+ units)
-    if (this.vampireGain) {
-      let target = 0
-      if (vampireDist != null && vampireDist < 60) {
-        // Volume at 2m = ~0.9, at 15m = ~0.3, at 40m = ~0.08
-        target = Math.min(0.9, 4 / (vampireDist + 3))
-      }
-      this.vampireGain.gain.linearRampToValueAtTime(target, this.ctx.currentTime + 0.25)
-    }
   }
 
   private refreshAmbience() {
     if (this.dayInterval) { clearInterval(this.dayInterval); this.dayInterval = null }
     if (this.nightInterval) { clearInterval(this.nightInterval); this.nightInterval = null }
-    if (this.vampireInterval) { clearInterval(this.vampireInterval); this.vampireInterval = null }
 
     if (!this.ctx) return
 
@@ -83,12 +66,6 @@ class GameAudio {
         if (Math.random() < 0.6) this.playOwl()
         if (Math.random() < 0.7) this.playCrickets()
       }, 4500)
-      // Periodic vampire whispers when distance is close enough
-      this.vampireInterval = setInterval(() => {
-        if (this.vampireDistance != null && this.vampireDistance < 50) {
-          this.playVampireWhisper()
-        }
-      }, 2800)
     } else {
       // Bird chirps during the day
       this.playBirdChirp()
@@ -188,97 +165,14 @@ class GameAudio {
     }
   }
 
-  // Creepy whisper: filtered noise + a detuned low drone with vibrato.
-  // Louder when the closest vampire is near (via `vampireGain` ramp).
-  private playVampireWhisper() {
-    if (!this.ctx || !this.vampireGain) return
-    const ctx = this.ctx
-    const now = ctx.currentTime + 0.05
-    const dur = 1.2 + Math.random() * 1.0
-
-    // --- Whisper: filtered pink-ish noise shaped by an envelope
-    const bufferSize = Math.floor(ctx.sampleRate * dur)
-    const noiseBuf = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
-    const ch = noiseBuf.getChannelData(0)
-    for (let i = 0; i < bufferSize; i++) {
-      // Modulated noise (speech-like vowel formants jittered)
-      const x = Math.random() * 2 - 1
-      // LFO shaping simulating breathing/consonants
-      const mod = 0.6 + 0.4 * Math.sin(i * 0.00025 + Math.random() * 0.3)
-      ch[i] = x * mod
-    }
-    const noiseSrc = ctx.createBufferSource()
-    noiseSrc.buffer = noiseBuf
-
-    const bp1 = ctx.createBiquadFilter()
-    bp1.type = 'bandpass'
-    bp1.frequency.value = 700
-    bp1.Q.value = 1.2
-    const bp2 = ctx.createBiquadFilter()
-    bp2.type = 'bandpass'
-    bp2.frequency.value = 1300
-    bp2.Q.value = 3
-
-    // Slowly sweep the formants for a breathing/talking feel
-    bp1.frequency.setValueAtTime(600, now)
-    bp1.frequency.linearRampToValueAtTime(900, now + dur)
-    bp2.frequency.setValueAtTime(1200, now)
-    bp2.frequency.linearRampToValueAtTime(1700, now + dur * 0.7)
-    bp2.frequency.linearRampToValueAtTime(900, now + dur)
-
-    const whisperGain = ctx.createGain()
-    whisperGain.gain.setValueAtTime(0.0001, now)
-    whisperGain.gain.exponentialRampToValueAtTime(0.45, now + 0.15)
-    whisperGain.gain.linearRampToValueAtTime(0.3, now + dur * 0.6)
-    whisperGain.gain.exponentialRampToValueAtTime(0.0001, now + dur)
-
-    noiseSrc.connect(bp1)
-    bp1.connect(bp2)
-    bp2.connect(whisperGain)
-    whisperGain.connect(this.vampireGain!)
-    noiseSrc.start(now)
-    noiseSrc.stop(now + dur + 0.05)
-
-    // --- Low drone underneath the whisper
-    const drone = ctx.createOscillator()
-    drone.type = 'sawtooth'
-    drone.frequency.value = 62 + Math.random() * 8
-    const lfo = ctx.createOscillator()
-    lfo.type = 'sine'
-    lfo.frequency.value = 4 + Math.random() * 2
-    const lfoGain = ctx.createGain()
-    lfoGain.gain.value = 3
-    lfo.connect(lfoGain)
-    lfoGain.connect(drone.frequency)
-
-    const droneLp = ctx.createBiquadFilter()
-    droneLp.type = 'lowpass'
-    droneLp.frequency.value = 380
-    droneLp.Q.value = 2
-    const droneGain = ctx.createGain()
-    droneGain.gain.setValueAtTime(0.0001, now)
-    droneGain.gain.exponentialRampToValueAtTime(0.22, now + 0.2)
-    droneGain.gain.linearRampToValueAtTime(0.15, now + dur * 0.7)
-    droneGain.gain.exponentialRampToValueAtTime(0.0001, now + dur)
-
-    drone.connect(droneLp)
-    droneLp.connect(droneGain)
-    droneGain.connect(this.vampireGain!)
-    drone.start(now)
-    drone.stop(now + dur + 0.05)
-    lfo.start(now)
-    lfo.stop(now + dur + 0.05)
-  }
 
   stop() {
     if (this.dayInterval) { clearInterval(this.dayInterval); this.dayInterval = null }
     if (this.nightInterval) { clearInterval(this.nightInterval); this.nightInterval = null }
-    if (this.vampireInterval) { clearInterval(this.vampireInterval); this.vampireInterval = null }
     try { this.ctx?.close() } catch {}
     this.ctx = null
     this.master = null
     this.ambientGain = null
-    this.vampireGain = null
     this.started = false
   }
 }

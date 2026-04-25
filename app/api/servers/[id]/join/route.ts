@@ -86,6 +86,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       },
       identity: {
         kind: identity.kind,
+        key: identity.key,
         name: identity.kind === 'user' ? identity.username : identity.guestName,
       },
     })

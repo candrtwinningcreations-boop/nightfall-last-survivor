@@ -29,15 +29,18 @@ export async function GET(req: Request) {
         ? { isPrivate: true, ownerId: identity.userId }
         : { isPrivate: true, ownerGuestId: identity.guestId }
 
+      // Use the canonical friendKey for allow-list matching.  That makes newly
+      // invited signed-in users and guests show up immediately in their Private
+      // Server list, using the same key format as join authorization.
       const allowedWhere = identity.kind === 'user'
         ? {
             isPrivate: true,
-            friends: { some: { userId: identity.userId } },
+            friends: { some: { friendKey: identity.key } },
             NOT: { ownerId: identity.userId },
           }
         : {
             isPrivate: true,
-            friends: { some: { guestId: identity.guestId } },
+            friends: { some: { friendKey: identity.key } },
             NOT: { ownerGuestId: identity.guestId },
           }
 

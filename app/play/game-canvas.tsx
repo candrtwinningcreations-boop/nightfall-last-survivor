@@ -57,11 +57,12 @@ type ChunkData = {
   group: THREE.Group
   trees: { mesh: THREE.Object3D; hp: number; px: number; pz: number; collider: boolean }[]
   stones: { mesh: THREE.Object3D; px: number; py: number; pz: number; hp: number; maxHp: number; oreKind: 'stone' | 'iron'; initialScale: number }[]
-  droppedItems: { mesh: THREE.Object3D; id: ItemId; count: number; px: number; py: number; pz: number; vy: number; life: number }[]
+  droppedItems: { netId: string; mesh: THREE.Object3D; id: ItemId; count: number; px: number; py: number; pz: number; vy: number; life: number }[]
   terrain: THREE.Mesh
 }
 
 type Zombie = {
+  id: string
   mesh: THREE.Group
   pos: THREE.Vector3
   vel: THREE.Vector3
@@ -79,6 +80,7 @@ type Zombie = {
 }
 
 type Vampire = {
+  id: string
   mesh: THREE.Group
   pos: THREE.Vector3
   vel: THREE.Vector3
@@ -101,6 +103,7 @@ type GoblinPhase = 'approach' | 'grabbing' | 'fleeing'
 type GoblinBackpack = { items: { id: ItemId; count: number }[]; mesh: THREE.Object3D }
 
 type Goblin = {
+  id: string
   mesh: THREE.Group
   pos: THREE.Vector3
   vel: THREE.Vector3
@@ -126,6 +129,7 @@ type OrcState = 'walking' | 'roaring' | 'down' | 'gettingUp' | 'dying'
 type OrcWeakSpot = { mesh: THREE.Object3D; name: string; active: boolean }
 
 type OrcBoss = {
+  id: string
   mesh: THREE.Group
   pos: THREE.Vector3
   vel: THREE.Vector3
@@ -580,7 +584,7 @@ export default function GameCanvas() {
         // Attach a small "1× stone" dropped-item record for pickup.
         // Matches the droppedItems shape used by dropItemToWorld().
         // life = 1e9 => effectively never despawn naturally.
-        dropped.push({ mesh: sm, id: 'stone', count: 1, px: wx, py: wy + 0.1, pz: wz, vy: 0, life: 1e9 })
+        dropped.push({ netId: `ground_stone_${wx.toFixed(1)}_${wz.toFixed(1)}`, mesh: sm, id: 'stone', count: 1, px: wx, py: wy + 0.1, pz: wz, vy: 0, life: 1e9 })
       }
       // bushes (non-colliding decoration)
       for (let i = 0; i < 12; i++) {
@@ -650,7 +654,9 @@ export default function GameCanvas() {
           const key = chunkKey(pcx + dx, pcz + dz)
           needed.add(key)
           if (!chunks.has(key)) {
-            chunks.set(key, generateChunk(pcx + dx, pcz + dz))
+            const generated = generateChunk(pcx + dx, pcz + dz)
+            applyBrokenResourcesToChunk(generated)
+            chunks.set(key, generated)
           }
         }
       }
@@ -1277,9 +1283,100 @@ export default function GameCanvas() {
     // Building ghost
     let buildGhost: THREE.Mesh | null = null
 
+    // ---------------------------------------------------------------------
+    // Multiplayer world synchronization.
+    // The React/network layer polls /api/servers/[id]/world and calls the
+    // window hooks below.  The server elects one active client as the temporary
+    // simulation authority; only that client advances enemy spawn timers and
+    // uploads enemy snapshots.  All clients still publish discrete world events
+    // (tree/stone breaks, item drops/pickups, structures) so the environment is
+    // reconciled quickly for everyone on the same server.
+    // ---------------------------------------------------------------------
+    type WorldEvent = { id: string; type: string; payload: any }
+    type EnemySnapshot = { id: string; kind: 'zombie' | 'vampire' | 'goblin' | 'orc'; x: number; y: number; z: number; hp: number; state?: string; fleeing?: boolean }
+    const worldClientId = (() => {
+      try {
+        let id = window.localStorage.getItem('nightfall:worldClientId')
+        if (!id) {
+          id = `wc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+          window.localStorage.setItem('nightfall:worldClientId', id)
+        }
+        return id
+      } catch {
+        return `wc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+      }
+    })()
+    let isWorldAuthority = false
+    let lastWorldRevision = 0
+    const pendingWorldEvents: WorldEvent[] = []
+    const appliedWorldEvents = new Set<string>()
+    const brokenResources = new Set<string>()
+    const removedDropIds = new Set<string>()
+    let pvpDeathDropped = false
+
+    function makeNetId(prefix: string) {
+      return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    }
+
+    function resourceKey(kind: 'tree' | 'stone', x: number, z: number) {
+      return `${kind}:${x.toFixed(2)}:${z.toFixed(2)}`
+    }
+
+    function queueWorldEvent(type: string, payload: any) {
+      const evt = { id: makeNetId('evt'), type, payload }
+      // Local actions have already been applied immediately; marking the event
+      // avoids double-applying it when the server echoes it back.
+      appliedWorldEvents.add(evt.id)
+      pendingWorldEvents.push(evt)
+    }
+
+    function removeResourceMesh(kind: 'tree' | 'stone', x: number, z: number, animated = false) {
+      const key = resourceKey(kind, x, z)
+      brokenResources.add(key)
+      for (const c of chunks.values()) {
+        if (kind === 'tree') {
+          const idx = c.trees.findIndex(t => resourceKey('tree', t.px, t.pz) === key)
+          if (idx >= 0) {
+            const t = c.trees[idx]
+            t.collider = false
+            c.trees.splice(idx, 1)
+            if (animated) {
+              const startQuat = t.mesh.quaternion.clone()
+              const endQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2).multiply(startQuat)
+              fallingTrees.push({ mesh: t.mesh, startQuat, endQuat, progress: 0, duration: 1.1, px: t.px, pz: t.pz, axisX: 0, axisZ: 1, landed: false, linger: 1.3, broken: false })
+            } else if (t.mesh.parent) t.mesh.parent.remove(t.mesh)
+          }
+        } else {
+          const idx = c.stones.findIndex(st => resourceKey('stone', st.px, st.pz) === key)
+          if (idx >= 0) {
+            const st = c.stones[idx]
+            if (st.mesh.parent) st.mesh.parent.remove(st.mesh)
+            c.stones.splice(idx, 1)
+          }
+        }
+      }
+    }
+
+    function applyBrokenResourcesToChunk(c: ChunkData) {
+      for (let i = c.trees.length - 1; i >= 0; i--) {
+        const tree = c.trees[i]
+        if (tree && brokenResources.has(resourceKey('tree', tree.px, tree.pz))) {
+          if (tree.mesh.parent) tree.mesh.parent.remove(tree.mesh)
+          c.trees.splice(i, 1)
+        }
+      }
+      for (let i = c.stones.length - 1; i >= 0; i--) {
+        const stone = c.stones[i]
+        if (stone && brokenResources.has(resourceKey('stone', stone.px, stone.pz))) {
+          if (stone.mesh.parent) stone.mesh.parent.remove(stone.mesh)
+          c.stones.splice(i, 1)
+        }
+      }
+    }
+
     // Zombies
     const zombies: Zombie[] = []
-    function createZombie(x: number, y: number, z: number): Zombie {
+    function createZombie(x: number, y: number, z: number, id = makeNetId('z')): Zombie {
       const g = new THREE.Group()
       // More realistic, shaded materials with slight roughness variation
       const shirtMat = new THREE.MeshStandardMaterial({ color: 0x3f5c3a, roughness: 0.95, metalness: 0 })
@@ -1372,6 +1469,7 @@ export default function GameCanvas() {
       g.position.set(x, y, z)
       scene.add(g)
       return {
+        id,
         mesh: g,
         pos: new THREE.Vector3(x, y, z),
         vel: new THREE.Vector3(),
@@ -1395,7 +1493,7 @@ export default function GameCanvas() {
 
     // --- Goblins (opportunistic thieves) ---
     const goblins: Goblin[] = []
-    function createGoblin(x: number, y: number, z: number): Goblin {
+    function createGoblin(x: number, y: number, z: number, id = makeNetId('g')): Goblin {
       const g = new THREE.Group()
       // Short green body, proportioned like a child. Now uses Standard materials
       // so it picks up scene lighting properly.
@@ -1494,6 +1592,7 @@ export default function GameCanvas() {
       g.position.set(x, y, z)
       scene.add(g)
       return {
+        id,
         mesh: g,
         pos: new THREE.Vector3(x, y, z),
         vel: new THREE.Vector3(),
@@ -1568,7 +1667,7 @@ export default function GameCanvas() {
 
     // --- Vampires (boss-class night enemies) ---
     const vampires: Vampire[] = []
-    function createVampire(x: number, y: number, z: number): Vampire {
+    function createVampire(x: number, y: number, z: number, id = makeNetId('v')): Vampire {
       const g = new THREE.Group()
       // Tall gaunt vampire with dark cape.
       const skinMat = new THREE.MeshStandardMaterial({ color: 0xe8dccd, roughness: 0.6, metalness: 0 })
@@ -1666,6 +1765,7 @@ export default function GameCanvas() {
       g.position.set(x, y, z)
       scene.add(g)
       return {
+        id,
         mesh: g,
         pos: new THREE.Vector3(x, y, z),
         vel: new THREE.Vector3(),
@@ -1698,24 +1798,25 @@ export default function GameCanvas() {
       }
     }
 
-    function spawnVampire() {
-      if (vampires.length >= MAX_VAMPIRES) return
+    function spawnVampire(id = makeNetId('v'), announce = true, sx?: number, sz?: number) {
+      if (vampires.some(v => v.id === id) || vampires.length >= MAX_VAMPIRES) return
       const angle = Math.random() * Math.PI * 2
       // Spawn well outside the player's immediate perception so they appear
       // to close in from a distance instead of phasing in on top of the player.
       const dist = 55 + Math.random() * 20
-      const x = playerPos.x + Math.cos(angle) * dist
-      const z = playerPos.z + Math.sin(angle) * dist
+      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
+      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
       const y = heightAt(x, z)
-      const v = createVampire(x, y, z)
+      const v = createVampire(x, y, z, id)
       vampires.push(v)
+      if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'vampire', x, y, z })
       useGame.getState().showToast('🦇 A vampire stalks you...')
     }
 
     // --- Huge Green Orc Boss ---
     const orcs: OrcBoss[] = []
 
-    function createOrc(x: number, y: number, z: number): OrcBoss {
+    function createOrc(x: number, y: number, z: number, id = makeNetId('o')): OrcBoss {
       const g = new THREE.Group()
       const skinMat = new THREE.MeshStandardMaterial({ color: 0x2f8f34, roughness: 0.82, metalness: 0 })
       const darkSkinMat = new THREE.MeshStandardMaterial({ color: 0x1f6126, roughness: 0.95, metalness: 0 })
@@ -1813,6 +1914,7 @@ export default function GameCanvas() {
       g.position.set(x, y, z)
       scene.add(g)
       return {
+        id,
         mesh: g,
         pos: new THREE.Vector3(x, y, z),
         vel: new THREE.Vector3(),
@@ -1840,14 +1942,15 @@ export default function GameCanvas() {
       o.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
     }
 
-    function spawnOrc() {
-      if (orcs.length >= MAX_ORCS) return
+    function spawnOrc(id = makeNetId('o'), announce = true, sx?: number, sz?: number) {
+      if (orcs.some(o => o.id === id) || orcs.length >= MAX_ORCS) return
       const angle = Math.random() * Math.PI * 2
       const dist = 70 + Math.random() * 18
-      const x = playerPos.x + Math.cos(angle) * dist
-      const z = playerPos.z + Math.sin(angle) * dist
+      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
+      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
       const y = heightAt(x, z)
-      orcs.push(createOrc(x, y, z))
+      orcs.push(createOrc(x, y, z, id))
+      if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'orc', x, y, z })
       useGame.getState().showToast('👹 A huge green orc boss roars in the distance!')
     }
 
@@ -2639,7 +2742,7 @@ export default function GameCanvas() {
     window.addEventListener('resize', onResize)
 
     // --- Actions ---
-    function dropItemToWorld(id: ItemId, count: number, x: number, y: number, z: number) {
+    function dropItemToWorld(id: ItemId, count: number, x: number, y: number, z: number, netId = makeNetId('drop'), announce = true) {
       const def = ITEMS[id]
       // Compose a recognizable drop mesh per item family so they pop visually
       // against grass/dirt. Logs get a chunky cylindrical "log" body with a
@@ -2674,7 +2777,8 @@ export default function GameCanvas() {
       const chunkZ = Math.floor(z / CHUNK_SIZE)
       const c = chunks.get(chunkKey(chunkX, chunkZ))
       // Items linger for 30 seconds in the world before disappearing.
-      if (c) c.droppedItems.push({ mesh: group, id, count, px: x, py: y, pz: z, vy: 2, life: 30 })
+      if (c && !removedDropIds.has(netId)) c.droppedItems.push({ netId, mesh: group, id, count, px: x, py: y, pz: z, vy: 2, life: 30 })
+      if (announce) queueWorldEvent('item_drop', { netId, itemId: id, count, x, y, z })
     }
 
     function dropEquippedItem() {
@@ -2708,6 +2812,8 @@ export default function GameCanvas() {
         const d = closest.c.droppedItems[closest.i]
         const added = useGame.getState().addItem(d.id, d.count)
         if (added) {
+          removedDropIds.add(d.netId)
+          queueWorldEvent('item_pickup', { netId: d.netId })
           scene.remove(d.mesh)
           closest.c.droppedItems.splice(closest.i, 1)
         } else {
@@ -2744,18 +2850,20 @@ export default function GameCanvas() {
       s.addStructure(st)
       addStructureMesh(st)
       s.consumeBuildItem(itemId, 1)
+      queueWorldEvent('structure_add', { structure: st })
     }
 
-    function spawnZombie() {
-      if (zombies.length >= MAX_ZOMBIES) return
+    function spawnZombie(id = makeNetId('z'), announce = true, sx?: number, sz?: number) {
+      if (zombies.some(z => z.id === id) || zombies.length >= MAX_ZOMBIES) return
       const angle = Math.random() * Math.PI * 2
       // Push spawn point well outside the player's awareness so the horde
       // is seen shuffling in from the darkness rather than appearing instantly.
       const dist = 42 + Math.random() * 22
-      const x = playerPos.x + Math.cos(angle) * dist
-      const z = playerPos.z + Math.sin(angle) * dist
+      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
+      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
       const y = heightAt(x, z)
-      zombies.push(createZombie(x, y, z))
+      zombies.push(createZombie(x, y, z, id))
+      if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'zombie', x, y, z })
     }
 
     // Per-kind footprint + vertical bounds for structures. Used for both
@@ -2847,14 +2955,15 @@ export default function GameCanvas() {
       zombies.length = 0
     }
 
-    function spawnGoblin() {
-      if (goblins.length >= MAX_GOBLINS) return
+    function spawnGoblin(id = makeNetId('g'), announce = true, sx?: number, sz?: number) {
+      if (goblins.some(g => g.id === id) || goblins.length >= MAX_GOBLINS) return
       const angle = Math.random() * Math.PI * 2
       const dist = 38 + Math.random() * 18
-      const x = playerPos.x + Math.cos(angle) * dist
-      const z = playerPos.z + Math.sin(angle) * dist
+      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
+      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
       const y = heightAt(x, z)
-      goblins.push(createGoblin(x, y, z))
+      goblins.push(createGoblin(x, y, z, id))
+      if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'goblin', x, y, z })
       useGame.getState().showToast('🟢 A goblin eyes your loot!')
     }
 
@@ -2891,6 +3000,7 @@ export default function GameCanvas() {
     // and interpolate toward it every frame to hide the latency.
     // ---------------------------------------------------------------------
     type Ghost = {
+      name: string
       mesh: THREE.Group
       label: THREE.Sprite
       pos: THREE.Vector3
@@ -2982,6 +3092,7 @@ export default function GameCanvas() {
       g.rotation.y = yaw
       scene.add(g)
       const ghost: Ghost = {
+        name,
         mesh: g,
         label,
         pos: new THREE.Vector3(x, y, z),
@@ -3050,6 +3161,162 @@ export default function GameCanvas() {
       yaw: playerYaw,
     })
 
+    function enemySnapshot(): EnemySnapshot[] {
+      return [
+        ...zombies.map(z => ({ id: z.id, kind: 'zombie' as const, x: z.pos.x, y: z.pos.y, z: z.pos.z, hp: z.hp })),
+        ...vampires.map(v => ({ id: v.id, kind: 'vampire' as const, x: v.pos.x, y: v.pos.y, z: v.pos.z, hp: v.hp, fleeing: v.fleeing })),
+        ...goblins.map(g => ({ id: g.id, kind: 'goblin' as const, x: g.pos.x, y: g.pos.y, z: g.pos.z, hp: g.hp, state: g.phase })),
+        ...orcs.map(o => ({ id: o.id, kind: 'orc' as const, x: o.pos.x, y: o.pos.y, z: o.pos.z, hp: o.hp, state: o.state })),
+      ]
+    }
+
+    function removeDropById(netId: string) {
+      removedDropIds.add(netId)
+      for (const c of chunks.values()) {
+        const idx = c.droppedItems.findIndex(d => d.netId === netId)
+        if (idx >= 0) {
+          scene.remove(c.droppedItems[idx].mesh)
+          c.droppedItems.splice(idx, 1)
+          return
+        }
+      }
+    }
+
+    function ownMemberKey() {
+      const fromJoin = (window as any).__nightfallMemberKey
+      if (typeof fromJoin === 'string' && fromJoin) return fromJoin
+      try {
+        const gid = window.localStorage.getItem('nightfall:guestId')
+        if (gid) return `g:${gid}`
+      } catch {}
+      return null
+    }
+
+    function dropAllPlayerItems(reason: string) {
+      if (pvpDeathDropped) return
+      pvpDeathDropped = true
+      const state = useGame.getState()
+      let dropped = 0
+      let ring = 0
+      for (const slot of state.inventory) {
+        if (!slot?.id || slot.count <= 0) continue
+        const a = ring * 1.17
+        const r = 0.45 + (ring % 5) * 0.16
+        dropItemToWorld(slot.id, slot.count, playerPos.x + Math.cos(a) * r, heightAt(playerPos.x, playerPos.z) + 0.55, playerPos.z + Math.sin(a) * r)
+        ring++
+        dropped += slot.count
+      }
+      for (const [rawId, count] of Object.entries(state.buildInventory)) {
+        const id = rawId as ItemId
+        const n = Number(count || 0)
+        if (!n) continue
+        const a = ring * 1.17
+        const r = 0.45 + (ring % 5) * 0.16
+        dropItemToWorld(id, n, playerPos.x + Math.cos(a) * r, heightAt(playerPos.x, playerPos.z) + 0.55, playerPos.z + Math.sin(a) * r)
+        ring++
+        dropped += n
+      }
+      state.setInventory(Array.from({ length: 30 }, () => ({ id: null, count: 0 })))
+      state.setBuildInventory({})
+      state.setEquipped(null)
+      state.showToast(dropped > 0 ? `💀 ${reason} You dropped ${dropped} items!` : `💀 ${reason}`)
+    }
+
+    function applyWorldEvent(evt: WorldEvent) {
+      if (!evt?.id || appliedWorldEvents.has(evt.id)) return
+      appliedWorldEvents.add(evt.id)
+      const p = evt.payload || {}
+      if (evt.type === 'enemy_spawn') {
+        if (p.kind === 'zombie') spawnZombie(p.id, false, Number(p.x), Number(p.z))
+        else if (p.kind === 'vampire') spawnVampire(p.id, false, Number(p.x), Number(p.z))
+        else if (p.kind === 'goblin') spawnGoblin(p.id, false, Number(p.x), Number(p.z))
+        else if (p.kind === 'orc') spawnOrc(p.id, false, Number(p.x), Number(p.z))
+      } else if (evt.type === 'resource_break') {
+        if (p.kind === 'tree' || p.kind === 'stone') removeResourceMesh(p.kind, Number(p.x), Number(p.z), p.kind === 'tree')
+      } else if (evt.type === 'item_drop') {
+        if (p.itemId && !removedDropIds.has(String(p.netId))) dropItemToWorld(p.itemId as ItemId, Number(p.count || 1), Number(p.x), Number(p.y), Number(p.z), String(p.netId), false)
+      } else if (evt.type === 'item_pickup') {
+        removeDropById(String(p.netId))
+      } else if (evt.type === 'structure_add' && p.structure) {
+        const state = useGame.getState()
+        if (!state.structures.some(st => st.id === p.structure.id)) {
+          state.addStructure(p.structure as StructureData)
+          addStructureMesh(p.structure as StructureData)
+        }
+      } else if (evt.type === 'structure_remove') {
+        useGame.getState().removeStructure(String(p.id))
+        removeStructureMesh(String(p.id))
+      } else if (evt.type === 'structure_update') {
+        useGame.getState().updateStructure(String(p.id), p.patch || {})
+      } else if (evt.type === 'pvp_hit') {
+        const targetId = String(p.targetId || '')
+        if (targetId && targetId === ownMemberKey()) {
+          const state = useGame.getState()
+          if (state.mode !== 'dead') {
+            const before = state.health
+            const kx = Number(p.knockX || 0)
+            const kz = Number(p.knockZ || 0)
+            playerPos.x += kx
+            playerPos.z += kz
+            playerVel.x += kx * 2.5
+            playerVel.z += kz * 2.5
+            state.takeDamage(Math.max(1, Number(p.damage || 1)))
+            state.showToast(`⚔️ Hit by ${String(p.attackerName || 'another player')}!`)
+            if (before > 0 && useGame.getState().health <= 0) {
+              dropAllPlayerItems(`Slain by ${String(p.attackerName || 'another player')}.`)
+              queueWorldEvent('pvp_death', { victimId: targetId, killerId: String(p.attackerId || ''), x: playerPos.x, y: heightAt(playerPos.x, playerPos.z), z: playerPos.z })
+            }
+          }
+        }
+      } else if (evt.type === 'pvp_death') {
+        if (String(p.killerId || '') === ownMemberKey()) useGame.getState().showToast('🏆 You defeated a player!')
+      }
+    }
+
+    function reconcileEnemySnapshots(snapshots: EnemySnapshot[]) {
+      if (isWorldAuthority) return
+      const seen = new Set<string>()
+      for (const e of snapshots || []) {
+        seen.add(e.id)
+        const pos = new THREE.Vector3(Number(e.x), Number(e.y), Number(e.z))
+        let target: Zombie | Vampire | Goblin | OrcBoss | undefined
+        if (e.kind === 'zombie') target = zombies.find(z => z.id === e.id) || (spawnZombie(e.id, false, e.x, e.z), zombies.find(z => z.id === e.id))
+        else if (e.kind === 'vampire') target = vampires.find(v => v.id === e.id) || (spawnVampire(e.id, false, e.x, e.z), vampires.find(v => v.id === e.id))
+        else if (e.kind === 'goblin') target = goblins.find(g => g.id === e.id) || (spawnGoblin(e.id, false, e.x, e.z), goblins.find(g => g.id === e.id))
+        else if (e.kind === 'orc') target = orcs.find(o => o.id === e.id) || (spawnOrc(e.id, false, e.x, e.z), orcs.find(o => o.id === e.id))
+        if (target) {
+          target.pos.lerp(pos, 0.65)
+          target.hp = Number(e.hp ?? target.hp)
+          if (e.kind === 'orc' && e.state) (target as OrcBoss).state = e.state as OrcState
+          if (e.kind === 'goblin' && e.state) (target as Goblin).phase = e.state as GoblinPhase
+          if (e.kind === 'vampire') (target as Vampire).fleeing = !!e.fleeing
+          target.mesh.position.copy(target.pos)
+        }
+      }
+      for (let i = zombies.length - 1; i >= 0; i--) if (!seen.has(zombies[i].id)) { removeZombie(zombies[i]); zombies.splice(i, 1) }
+      for (let i = vampires.length - 1; i >= 0; i--) if (!seen.has(vampires[i].id)) { removeVampire(vampires[i]); vampires.splice(i, 1) }
+      for (let i = goblins.length - 1; i >= 0; i--) if (!seen.has(goblins[i].id)) { removeGoblin(goblins[i]); goblins.splice(i, 1) }
+      for (let i = orcs.length - 1; i >= 0; i--) if (!seen.has(orcs[i].id)) { removeOrc(orcs[i]); orcs.splice(i, 1) }
+    }
+
+    ;(window as any).__nightfallWorldSyncPayload = () => ({
+      clientId: worldClientId,
+      sinceRevision: lastWorldRevision,
+      events: pendingWorldEvents.splice(0, pendingWorldEvents.length),
+      snapshot: isWorldAuthority ? { entities: enemySnapshot() } : undefined,
+    })
+    ;(window as any).__nightfallApplyWorldSync = (data: any) => {
+      if (!data) return
+      if (typeof data.revision === 'number') lastWorldRevision = Math.max(lastWorldRevision, data.revision)
+      isWorldAuthority = data.authorityId === worldClientId
+      if (typeof data.timeOfDay === 'number') {
+        timeOfDayAcc = data.timeOfDay
+        useGame.getState().setTime(timeOfDayAcc)
+      }
+      for (const evt of (data.events || []) as WorldEvent[]) applyWorldEvent(evt)
+      if (data.snapshot?.entities) reconcileEnemySnapshots(data.snapshot.entities as EnemySnapshot[])
+    }
+
     const raycaster = new THREE.Raycaster()
 
     function animate() {
@@ -3058,6 +3325,7 @@ export default function GameCanvas() {
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
       const state = useGame.getState()
+      if (state.mode !== 'dead') pvpDeathDropped = false
       const paused = state.mode === 'paused' || state.mode === 'dead'
 
       // Time of day progression
@@ -3544,8 +3812,9 @@ export default function GameCanvas() {
           elbowGroup.rotation.x = -0.35 + swingA * 0.4
         } else {
           weaponGroup.rotation.x = 0.25
+          weaponGroup.rotation.y = -0.3
           weaponGroup.rotation.z = -0.15
-          weaponGroup.position.z = -0.82
+          weaponGroup.position.set(0.42, -0.45, -0.82)
           // Idle fist — subtle shoulder bob synced to head bob, plus a gentle
           // breathing sway so the arm looks alive. Elbow stays slightly bent.
           const breathe = Math.sin(performance.now() * 0.0018) * 0.02
@@ -3553,6 +3822,26 @@ export default function GameCanvas() {
           fistGroup.rotation.z = -0.12
           fistGroup.position.set(0.48, -0.18 + bobAmt * 0.5, 0.28)
           elbowGroup.rotation.x = -0.35
+        }
+
+        // Extra first-person walking flair: a figure-eight hand sway and a
+        // tiny roll make sprinting feel weighty even though the full body is
+        // hidden in first person.  Other players still see interpolated ghost
+        // avatars, while the local player gets immediate animation feedback.
+        if (attackTimer <= 0 && walking) {
+          const stride = Math.sin(bob)
+          const step = Math.cos(bob * 2)
+          if (hasWeapon) {
+            weaponGroup.position.x = 0.42 + stride * 0.035
+            weaponGroup.position.y = -0.45 + Math.abs(stride) * 0.035 + step * 0.012
+            weaponGroup.rotation.y = -0.3 + stride * 0.045
+            weaponGroup.rotation.z = -0.15 + stride * 0.08
+          } else {
+            fistGroup.position.x = 0.48 + stride * 0.045
+            fistGroup.position.y = -0.18 + bobAmt * 0.5 + Math.abs(stride) * 0.035
+            fistGroup.rotation.y = stride * 0.06
+            fistGroup.rotation.z = -0.12 + stride * 0.08
+          }
         }
 
         // Attack action
@@ -3568,7 +3857,7 @@ export default function GameCanvas() {
         updateBuildGhost(state)
 
         // Zombies update
-        if (isNightNow) {
+        if (isNightNow && isWorldAuthority) {
           zombieSpawnTimer -= dt
           if (zombieSpawnTimer <= 0) {
             zombieSpawnTimer = 3 + Math.random() * 4
@@ -3674,7 +3963,7 @@ export default function GameCanvas() {
         }
 
         // Vampire spawning (slower, rarer than zombies — boss encounters)
-        if (isNightNow) {
+        if (isNightNow && isWorldAuthority) {
           vampireSpawnTimer -= dt
           if (vampireSpawnTimer <= 0) {
             vampireSpawnTimer = 45 + Math.random() * 30
@@ -3778,8 +4067,8 @@ export default function GameCanvas() {
         }
 
         // --- Huge Orc boss spawning & AI ---
-        orcSpawnTimer -= dt
-        if (orcSpawnTimer <= 0) {
+        if (isWorldAuthority) orcSpawnTimer -= dt
+        if (isWorldAuthority && orcSpawnTimer <= 0) {
           orcSpawnTimer = 360 + Math.random() * 240
           spawnOrc()
         }
@@ -3925,8 +4214,8 @@ export default function GameCanvas() {
         // --- Goblin spawning & AI ---
         // Goblins appear at any time of day, sprint in, steal one inventory
         // stack, then bolt. Kill before they escape to recover the loot.
-        goblinSpawnTimer -= dt
-        if (goblinSpawnTimer <= 0) {
+        if (isWorldAuthority) goblinSpawnTimer -= dt
+        if (isWorldAuthority && goblinSpawnTimer <= 0) {
           // Next goblin sighting: 4–8 minutes later.
           goblinSpawnTimer = 240 + Math.random() * 240
           spawnGoblin()
@@ -4286,6 +4575,35 @@ export default function GameCanvas() {
         return
       }
 
+      // PvP: player ghosts are real targets.  Hits are sent through the shared
+      // world event stream; the victim applies damage, a tiny knockback, and
+      // drops all inventory/build items if the hit kills them.
+      if (eq !== 'holy_water') {
+        let bestGhost: { id: string; name: string; distance: number } | null = null
+        for (const [id, g] of ghosts) {
+          const hits = raycaster.intersectObject(g.mesh, true)
+          if (hits.length && hits[0].distance < REACH) {
+            if (!bestGhost || hits[0].distance < bestGhost.distance) bestGhost = { id, name: (g as any).name || 'Survivor', distance: hits[0].distance }
+          }
+        }
+        if (bestGhost) {
+          const attackerId = ownMemberKey() || worldClientId
+          let attackerName = 'Survivor'
+          try { attackerName = window.localStorage.getItem('nightfall:guestName') || attackerName } catch {}
+          const knock = 0.42
+          queueWorldEvent('pvp_hit', {
+            targetId: bestGhost.id,
+            attackerId,
+            attackerName,
+            damage: dmg,
+            knockX: attackDir.x * knock,
+            knockZ: attackDir.z * knock,
+          })
+          useGame.getState().showToast(`⚔️ Hit ${bestGhost.name} for ${dmg}`)
+          return
+        }
+      }
+
       // Holy water: single-use, instant-kill a zombie or vampire within reach.
       if (eq === 'holy_water') {
         let bestTarget: { kind: 'zombie' | 'vampire'; idx: number; dist: number } | null = null
@@ -4515,9 +4833,11 @@ export default function GameCanvas() {
                   }
                   useGame.getState().removeStructure(sm.id)
                   removeStructureMesh(sm.id)
+                  queueWorldEvent('structure_remove', { id: sm.id })
                   useGame.getState().showToast(`💥 ${kind === 'stone_wall' ? 'Stone wall' : kind === 'log_wall' ? 'Log wall' : 'Wooden wall'} broken!`)
                 } else {
                   useGame.getState().updateStructure(sm.id, { hp: newHp, maxHp })
+                  queueWorldEvent('structure_update', { id: sm.id, patch: { hp: newHp, maxHp } })
                   applyWallDamage(sm, newHp / maxHp)
                   applyHealthBar(sm, newHp, maxHp)
                 }
@@ -4617,6 +4937,8 @@ export default function GameCanvas() {
               linger: 2.2,
               broken: false,
             })
+            brokenResources.add(resourceKey('tree', entry.ref.px, entry.ref.pz))
+            queueWorldEvent('resource_break', { kind: 'tree', x: entry.ref.px, z: entry.ref.pz })
 
             useGame.getState().showToast('🌳 Timberrr!')
           }
@@ -4660,6 +4982,8 @@ export default function GameCanvas() {
               useGame.getState().showToast(`🪨 Boulder broken! +${count} Stone`)
             }
             // Stone meshes are parented to the chunk group — detach from real parent.
+            brokenResources.add(resourceKey('stone', entry.ref.px, entry.ref.pz))
+            queueWorldEvent('resource_break', { kind: 'stone', x: entry.ref.px, z: entry.ref.pz })
             if (entry.ref.mesh.parent) entry.ref.mesh.parent.remove(entry.ref.mesh)
             const idx = entry.chunk.stones.indexOf(entry.ref)
             if (idx >= 0) entry.chunk.stones.splice(idx, 1)
@@ -4842,6 +5166,8 @@ export default function GameCanvas() {
         delete (window as any).__nightfallRequestLock
         delete (window as any).__nightfallUpdateGhosts
         delete (window as any).__nightfallGetPos
+        delete (window as any).__nightfallWorldSyncPayload
+        delete (window as any).__nightfallApplyWorldSync
       } catch {}
       for (const id of Array.from(ghosts.keys())) disposeGhost(id)
       for (const sm of structureMeshes.values()) scene.remove(sm.mesh)

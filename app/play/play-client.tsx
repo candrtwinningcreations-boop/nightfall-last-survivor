@@ -101,6 +101,10 @@ export default function PlayClient() {
         router.replace('/servers')
         return
       }
+      const data = await r.json().catch(() => null)
+      if (data?.identity?.key) {
+        try { (window as any).__nightfallMemberKey = data.identity.key } catch {}
+      }
       setAuthed(true)
     }).catch(() => setAuthed(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,6 +205,46 @@ export default function PlayClient() {
     }
     beat()
     const interval = setInterval(beat, 3000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [authed])
+
+  // Multiplayer world-state synchronization loop.  This is separate from the
+  // slower presence heartbeat: it streams day/night time, authoritative enemy
+  // snapshots, and discrete world events (trees/resources/structures/drops).
+  useEffect(() => {
+    if (!authed) return
+    const sid = serverIdRef.current
+    if (!sid) return
+    let cancelled = false
+    let busy = false
+
+    async function syncWorld() {
+      if (cancelled || busy) return
+      const makePayload = (window as any).__nightfallWorldSyncPayload as undefined | (() => any)
+      const applySync = (window as any).__nightfallApplyWorldSync as undefined | ((data: any) => void)
+      if (!makePayload || !applySync) return
+      busy = true
+      try {
+        const payload: any = makePayload()
+        if (guestIdRef.current) {
+          payload.guestId = guestIdRef.current
+          payload.guestName = guestNameRef.current
+        }
+        const r = await fetch(`/api/servers/${encodeURIComponent(sid!)}/world`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (r.ok) applySync(await r.json().catch(() => null))
+      } catch {
+        // Best-effort.  The next tick will retry and the event queue will refill.
+      } finally {
+        busy = false
+      }
+    }
+
+    syncWorld()
+    const interval = setInterval(syncWorld, 900)
     return () => { cancelled = true; clearInterval(interval) }
   }, [authed])
 
