@@ -10,7 +10,9 @@
     "build:desktop-config": "node scripts/write-desktop-config.cjs",
     "dist:win": "node scripts/write-desktop-config.cjs && electron-builder --win portable",
     "dist:win:dir": "node scripts/write-desktop-config.cjs && electron-builder --win dir",
-    "dist:linux:dir": "node scripts/write-desktop-config.cjs && electron-builder --linux dir"
+    "dist:linux:dir": "node scripts/write-desktop-config.cjs && electron-builder --linux dir",
+    "publish:launcher": "node scripts/publish-desktop-launcher.cjs",
+    "dist:win:publish": "npm run dist:win && npm run publish:launcher"
   },
   "prisma": {
     "seed": "tsx --require dotenv/config scripts/safe-seed.ts"

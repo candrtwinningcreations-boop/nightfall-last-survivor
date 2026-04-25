@@ -13,3 +13,7 @@ coverage/
 
 .build/
 release/
+public/downloads/*.exe
+public/downloads/*.blockmap
+public/downloads/*.yml
+public/downloads/launcher-manifest.json

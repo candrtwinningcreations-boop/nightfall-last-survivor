@@ -1,4 +1,4 @@
-import { Skull, Swords, Hammer, Moon, Sun, Axe } from 'lucide-react'
+import { Skull, Swords, Hammer, Moon, Sun, Axe, MonitorDown } from 'lucide-react'
 import { AuthPanel } from './auth-panel'
 
 export default function Home() {
@@ -38,6 +38,13 @@ export default function Home() {
         </p>
 
         <AuthPanel />
+
+        <a
+          href="/download"
+          className="mt-6 inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-semibold text-red-100 transition hover:border-red-400/60 hover:bg-red-500/20"
+        >
+          <MonitorDown className="h-4 w-4" /> Download Windows desktop launcher
+        </a>
 
         <div id="how-to-play" className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl w-full">
           {[
