@@ -1287,56 +1287,117 @@ export default function GameCanvas() {
     heldWallMesh.visible = false
     weaponGroup.add(heldWallMesh)
 
-    // --- Improved per-tool weapon detail meshes (sword blade, axe blade, pommel etc.) ---
-    // All start invisible; the swap logic toggles which ones are shown per tool.
+    // --- Improved per-tool weapon detail meshes (full realistic medieval/survival silhouettes) ---
+    // All start invisible; swap logic toggles only the meshes relevant to the equipped tool.
 
-    // Sword: long blade with pointy tip, crossguard, pommel
-    const swordBladeGeo = new THREE.BoxGeometry(0.05, 0.7, 0.12)
-    const swordBlade = new THREE.Mesh(swordBladeGeo, weaponMat)
-    swordBlade.position.set(0, 0.48, 0)
+    // Sword: full blade, sharpened edges, fuller groove, crossguard, wrapped grip, pommel.
+    const swordBlade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.74, 0.13), weaponMat)
+    swordBlade.position.set(0, 0.52, 0)
     swordBlade.castShadow = true
     swordBlade.visible = false
     weaponGroup.add(swordBlade)
-    const swordTipGeo = new THREE.ConeGeometry(0.062, 0.16, 4)
-    const swordTip = new THREE.Mesh(swordTipGeo, weaponMat)
-    swordTip.position.set(0, 0.88, 0)
+
+    const swordEdgeL = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.76, 0.14), weaponMat)
+    swordEdgeL.position.set(0.024, 0.52, 0)
+    swordEdgeL.castShadow = true
+    swordEdgeL.visible = false
+    weaponGroup.add(swordEdgeL)
+
+    const swordEdgeR = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.76, 0.14), weaponMat)
+    swordEdgeR.position.set(-0.024, 0.52, 0)
+    swordEdgeR.castShadow = true
+    swordEdgeR.visible = false
+    weaponGroup.add(swordEdgeR)
+
+    const swordTip = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.2, 4), weaponMat)
+    swordTip.position.set(0, 0.98, 0)
     swordTip.rotation.y = Math.PI / 4
     swordTip.castShadow = true
     swordTip.visible = false
     weaponGroup.add(swordTip)
-    const swordGuardGeo = new THREE.BoxGeometry(0.28, 0.04, 0.08)
-    const swordGuardMat = new THREE.MeshStandardMaterial({ color: 0x453522, roughness: 0.85, metalness: 0.3 })
-    const swordGuard = new THREE.Mesh(swordGuardGeo, swordGuardMat)
-    swordGuard.position.set(0, 0.16, 0)
+
+    const swordFuller = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.52, 0.03),
+      new THREE.MeshStandardMaterial({ color: 0xb8c2cc, roughness: 0.42, metalness: 0.85 })
+    )
+    swordFuller.position.set(0, 0.52, 0.02)
+    swordFuller.castShadow = true
+    swordFuller.visible = false
+    weaponGroup.add(swordFuller)
+
+    const swordGuardMat = new THREE.MeshStandardMaterial({ color: 0x4a3523, roughness: 0.72, metalness: 0.35 })
+    const swordGuard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.045, 0.09), swordGuardMat)
+    swordGuard.position.set(0, 0.18, 0)
     swordGuard.castShadow = true
     swordGuard.visible = false
     weaponGroup.add(swordGuard)
-    const swordPommel = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), swordGuardMat)
-    swordPommel.position.set(0, -0.48, 0)
+
+    const swordQuillonL = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.12, 7), swordGuardMat)
+    swordQuillonL.position.set(0.2, 0.18, 0)
+    swordQuillonL.rotation.z = -Math.PI / 2
+    swordQuillonL.castShadow = true
+    swordQuillonL.visible = false
+    weaponGroup.add(swordQuillonL)
+
+    const swordQuillonR = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.12, 7), swordGuardMat)
+    swordQuillonR.position.set(-0.2, 0.18, 0)
+    swordQuillonR.rotation.z = Math.PI / 2
+    swordQuillonR.castShadow = true
+    swordQuillonR.visible = false
+    weaponGroup.add(swordQuillonR)
+
+    const swordGrip = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.038, 0.4, 12), gripMat)
+    swordGrip.position.set(0, -0.15, 0)
+    swordGrip.castShadow = true
+    swordGrip.visible = false
+    weaponGroup.add(swordGrip)
+
+    const swordPommel = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 10), swordGuardMat)
+    swordPommel.position.set(0, -0.42, 0)
     swordPommel.castShadow = true
     swordPommel.visible = false
     weaponGroup.add(swordPommel)
 
-    // Axe: curved wedge blade on one side with a small poll on the other
+    // Axe: complete broad head with blade cheek, bearded edge, socket and back spike.
+    const axeHeadSocket = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.2, 12), weaponMat)
+    axeHeadSocket.rotation.z = Math.PI / 2
+    axeHeadSocket.position.set(0.01, 0.22, 0)
+    axeHeadSocket.castShadow = true
+    axeHeadSocket.visible = false
+    weaponGroup.add(axeHeadSocket)
+
     const axeBladeShape = new THREE.Shape()
-    axeBladeShape.moveTo(0, -0.18)
-    axeBladeShape.lineTo(0, 0.18)
-    axeBladeShape.lineTo(0.22, 0.26)
-    axeBladeShape.lineTo(0.35, 0)
-    axeBladeShape.lineTo(0.22, -0.26)
-    axeBladeShape.lineTo(0, -0.18)
-    const axeBladeGeo = new THREE.ExtrudeGeometry(axeBladeShape, { depth: 0.06, bevelEnabled: false })
+    axeBladeShape.moveTo(-0.03, -0.24)
+    axeBladeShape.lineTo(-0.03, 0.24)
+    axeBladeShape.quadraticCurveTo(0.26, 0.34, 0.42, 0)
+    axeBladeShape.quadraticCurveTo(0.26, -0.34, -0.03, -0.24)
+    const axeBladeGeo = new THREE.ExtrudeGeometry(axeBladeShape, { depth: 0.08, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2 })
     axeBladeGeo.center()
     const axeBlade = new THREE.Mesh(axeBladeGeo, weaponMat)
-    axeBlade.position.set(0.18, 0.2, 0)
+    axeBlade.position.set(0.24, 0.22, 0)
     axeBlade.castShadow = true
     axeBlade.visible = false
     weaponGroup.add(axeBlade)
-    const axePoll = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.12), weaponMat)
-    axePoll.position.set(-0.12, 0.2, 0)
+
+    const axeBeard = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 8), weaponMat)
+    axeBeard.position.set(0.2, 0.06, 0)
+    axeBeard.rotation.z = -0.25
+    axeBeard.castShadow = true
+    axeBeard.visible = false
+    weaponGroup.add(axeBeard)
+
+    const axePoll = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.11, 0.11), weaponMat)
+    axePoll.position.set(-0.14, 0.22, 0)
     axePoll.castShadow = true
     axePoll.visible = false
     weaponGroup.add(axePoll)
+
+    const axeSpike = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.24, 8), weaponMat)
+    axeSpike.position.set(-0.28, 0.22, 0)
+    axeSpike.rotation.z = Math.PI / 2
+    axeSpike.castShadow = true
+    axeSpike.visible = false
+    weaponGroup.add(axeSpike)
 
     // Pickaxe: curved two-pointed head (thicker spike on each side)
     const pickHeadBarGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8)
@@ -2399,41 +2460,85 @@ export default function GameCanvas() {
 
       const body = new THREE.Group()
       const fins: THREE.Object3D[] = []
-      const spineMat = new THREE.MeshStandardMaterial({ color: 0x3b160d, roughness: 0.9, metalness: 0 })
-      for (let i = 0; i < 12; i++) {
-        const taper = 1 - i / 18
-        const seg = new THREE.Mesh(new THREE.SphereGeometry(0.56 * taper, 28, 18), i % 2 ? bellyMat : hideMat)
-        seg.scale.set(1.12, 0.78, 0.9)
-        seg.position.set(Math.sin(i * 0.55) * 0.035, 0.42 - i * 0.004, -i * 0.42)
+      const spineMat = new THREE.MeshStandardMaterial({ color: 0x2f1209, roughness: 0.92, metalness: 0 })
+      const wetHideMat = new THREE.MeshStandardMaterial({ color: 0x6a3520, roughness: 0.64, metalness: 0.05 })
+      const SEGMENTS = 24
+      for (let i = 0; i < SEGMENTS; i++) {
+        const t = i / (SEGMENTS - 1)
+        const taper = 1 - t * 0.82
+        const seg = new THREE.Mesh(new THREE.SphereGeometry(0.62 * taper, 26, 18), i % 2 ? wetHideMat : hideMat)
+        seg.scale.set(1.22, 0.72 + (1 - t) * 0.12, 0.92)
+        seg.position.set(Math.sin(i * 0.48) * (0.07 - t * 0.03), 0.44 - t * 0.24, -i * 0.36)
+        seg.userData.wormSegmentIndex = i
+        seg.userData.baseX = seg.position.x
+        seg.userData.baseY = seg.position.y
+        seg.userData.baseZ = seg.position.z
         seg.castShadow = true
         body.add(seg)
-        // Overlapping armored plates make the body read as segmented instead
-        // of one smooth tube, and catch light as the worm leaps out of sand.
-        const plate = new THREE.Mesh(new THREE.TorusGeometry(0.42 * taper, 0.022, 6, 18), spineMat)
-        plate.scale.set(1.22, 0.34, 0.72)
+
+        const belly = new THREE.Mesh(new THREE.SphereGeometry(0.46 * taper, 18, 12), bellyMat)
+        belly.scale.set(1.28, 0.34, 0.78)
+        belly.position.set(seg.position.x, seg.position.y - 0.28, seg.position.z + 0.02)
+        belly.userData.wormSegmentIndex = i
+        belly.userData.baseX = belly.position.x
+        belly.userData.baseY = belly.position.y
+        belly.userData.baseZ = belly.position.z
+        belly.castShadow = true
+        body.add(belly)
+
+        // Overlapping armored rings to emphasize full segmented anatomy.
+        const plate = new THREE.Mesh(new THREE.TorusGeometry(0.46 * taper, 0.028, 8, 22), spineMat)
+        plate.scale.set(1.24, 0.3, 0.76)
         plate.rotation.x = Math.PI / 2
-        plate.position.set(0, 0.43, -i * 0.42 + 0.015)
+        plate.position.set(seg.position.x * 0.9, seg.position.y + 0.02, seg.position.z + 0.01)
+        plate.userData.wormSegmentIndex = i
+        plate.userData.baseX = plate.position.x
+        plate.userData.baseY = plate.position.y
+        plate.userData.baseZ = plate.position.z
         plate.castShadow = true
         body.add(plate)
-        const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.085 * taper, 0.38 * taper, 6), spineMat)
-        dorsal.position.set(0, 0.92 - i * 0.014, -i * 0.42)
-        dorsal.rotation.x = -0.25
+
+        const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.09 * taper, 0.34 * taper, 6), spineMat)
+        dorsal.position.set(seg.position.x, seg.position.y + 0.44, seg.position.z)
+        dorsal.rotation.x = -0.22
         dorsal.userData.baseRotX = dorsal.rotation.x
+        dorsal.userData.wormSegmentIndex = i
         dorsal.castShadow = true
         fins.push(dorsal)
         body.add(dorsal)
-        if (i < 9) {
+
+        if (i < SEGMENTS - 3) {
           for (const side of [-1, 1]) {
-            const fin = new THREE.Mesh(new THREE.ConeGeometry(0.06 * taper, 0.29 * taper, 5), spineMat)
-            fin.position.set(side * (0.46 - i * 0.018), 0.52, -i * 0.42 + 0.04)
-            fin.rotation.set(0.2, 0, side * Math.PI / 2)
+            const fin = new THREE.Mesh(new THREE.ConeGeometry(0.06 * taper, 0.24 * taper, 5), spineMat)
+            fin.position.set(seg.position.x + side * (0.48 - t * 0.22), seg.position.y + 0.08, seg.position.z + 0.04)
+            fin.rotation.set(0.24, 0, side * Math.PI / 2)
             fin.userData.baseRotX = fin.rotation.x
+            fin.userData.wormSegmentIndex = i
             fin.castShadow = true
             fins.push(fin)
             body.add(fin)
           }
         }
       }
+
+      // Full tail so the boss reads as a complete giant worm creature.
+      const tail = new THREE.Group()
+      tail.position.set(0.02, 0.18, -SEGMENTS * 0.36 - 0.1)
+      tail.userData.wormSegmentIndex = SEGMENTS
+      tail.userData.baseX = tail.position.x
+      tail.userData.baseY = tail.position.y
+      tail.userData.baseZ = tail.position.z
+      const tailCore = new THREE.Mesh(new THREE.ConeGeometry(0.23, 1.35, 14), hideMat)
+      tailCore.rotation.x = -Math.PI / 2
+      tailCore.castShadow = true
+      tail.add(tailCore)
+      const tailBlade = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.62, 6), spineMat)
+      tailBlade.position.set(0, 0.08, -0.54)
+      tailBlade.rotation.x = -Math.PI / 2
+      tailBlade.castShadow = true
+      tail.add(tailBlade)
+      body.add(tail)
+
       body.visible = false
       g.add(body)
 
@@ -2546,6 +2651,28 @@ export default function GameCanvas() {
       w.mesh.position.y = heightAt(w.pos.x, w.pos.z) + 1.0
       w.vel.y = 7
       useGame.getState().showToast('🪱 The Worm launches from the sand — use swords or axes!')
+    }
+
+    function animateWormBody(w: WormBoss, intensity = 1) {
+      const waveBase = w.crawlPhase * 0.95
+      for (const child of w.body.children) {
+        const ud = (child as any).userData || {}
+        const idx = Number(ud.wormSegmentIndex)
+        if (!Number.isFinite(idx)) continue
+        const baseX = Number(ud.baseX)
+        const baseY = Number(ud.baseY)
+        if (!Number.isFinite(baseX) || !Number.isFinite(baseY)) continue
+        const delay = idx * 0.45
+        const lateral = Math.sin(waveBase - delay) * 0.11 * intensity
+        const vertical = Math.cos(waveBase * 1.22 - delay * 0.82) * 0.05 * intensity
+        child.position.x = baseX + lateral
+        child.position.y = baseY + vertical
+      }
+      w.fins.forEach((fin, idx) => {
+        const phase = waveBase + idx * 0.42
+        fin.rotation.x = (fin.userData.baseRotX ?? 0) + Math.sin(phase) * 0.08 * intensity
+        fin.rotation.z = (fin.userData.baseRotZ ?? 0) + Math.cos(phase * 0.8) * 0.04 * intensity
+      })
     }
 
     function wormWeaponDamage(eq: ItemId | null, _baseDamage: number) {
@@ -4393,8 +4520,12 @@ export default function GameCanvas() {
 
     const raycaster = new THREE.Raycaster()
 
-    function playerHasAnyTorch(state = useGame.getState()) {
-      return state.offhandItem === 'torch' || state.inventory.some(slot => slot?.id === 'torch' && slot.count > 0)
+    function playerHasActiveTorch(state = useGame.getState()) {
+      // Only torches the player can actively use should burn down:
+      // - offhand torch, OR
+      // - any torch sitting in quick-access hotbar slots 1..5 (index 0..4).
+      if (state.offhandItem === 'torch') return true
+      return state.inventory.slice(0, 5).some(slot => slot?.id === 'torch' && slot.count > 0)
     }
 
     function persistTorchDurability(force = false) {
@@ -4434,11 +4565,11 @@ export default function GameCanvas() {
         offhandTorchGroup.visible = false
       }
 
-      // Torches have a shared 15-minute burn timer and now decay passively
-      // whenever the player owns one — even if it is only sitting in inventory.
-      // The timer is persisted during decay so a quit/reload cannot restore time.
-      const ownsTorch = state.mode !== 'dead' && playerHasAnyTorch(state)
-      if (!paused && ownsTorch) {
+      // Torches share a single durability pool, but only actively accessible
+      // torches should consume it (offhand + hotbar slots 1..5).
+      // Torches parked deeper in inventory (slots 6+) are preserved.
+      const hasActiveTorch = state.mode !== 'dead' && playerHasActiveTorch(state)
+      if (!paused && hasActiveTorch) {
         const expired = state.damageTorchDurability(dt)
         persistTorchDurability(false)
         if (expired) consumeExpiredTorch(useGame.getState())
@@ -4876,11 +5007,20 @@ export default function GameCanvas() {
           pickSpike.visible = false
           pickBack.visible = false
           swordBlade.visible = false
+          swordEdgeL.visible = false
+          swordEdgeR.visible = false
           swordTip.visible = false
+          swordFuller.visible = false
           swordGuard.visible = false
+          swordQuillonL.visible = false
+          swordQuillonR.visible = false
+          swordGrip.visible = false
           swordPommel.visible = false
+          axeHeadSocket.visible = false
           axeBlade.visible = false
+          axeBeard.visible = false
           axePoll.visible = false
+          axeSpike.visible = false
           pickHeadBar.visible = false
           pickTip2.visible = false
           heldLogGroup.visible = false
@@ -4907,23 +5047,32 @@ export default function GameCanvas() {
             pickSpike.visible = true
             pickTip2.visible = true
           } else if (eq === 'stone_sword' || eq === 'iron_sword') {
-            // Handle (shorter grip) + crossguard + long blade + tip + pommel
-            handleMesh.visible = true
-            gripWrap.visible = true
-            handleMesh.scale.set(0.8, 0.55, 0.8)
-            weaponMat.color.set(eq === 'iron_sword' ? 0xe8eef5 : 0xd4d4d8)
+            // Complete sword model: full blade + edges/fuller + crossguard + grip + pommel.
+            handleMesh.visible = false
+            gripWrap.visible = false
+            weaponMat.color.set(eq === 'iron_sword' ? 0xe8eef5 : 0xb5b7bd)
+            ;(swordFuller.material as THREE.MeshStandardMaterial).color.set(eq === 'iron_sword' ? 0xc7d2de : 0x8f949a)
             swordBlade.visible = true
+            swordEdgeL.visible = true
+            swordEdgeR.visible = true
             swordTip.visible = true
+            swordFuller.visible = true
             swordGuard.visible = true
+            swordQuillonL.visible = true
+            swordQuillonR.visible = true
+            swordGrip.visible = true
             swordPommel.visible = true
           } else if (eq === 'stone_axe' || eq === 'iron_axe') {
-            // Handle + grip + extruded axe blade + small poll on back
+            // Complete axe model: haft + socket + broad bearded blade + poll + rear spike.
             handleMesh.visible = true
             gripWrap.visible = true
-            handleMesh.scale.set(1, 1, 1)
-            weaponMat.color.set(eq === 'iron_axe' ? 0xbfc7cf : 0xb45309)
+            handleMesh.scale.set(1.02, 1.04, 1.02)
+            weaponMat.color.set(eq === 'iron_axe' ? 0xc7ced6 : 0x9d7d55)
+            axeHeadSocket.visible = true
             axeBlade.visible = true
+            axeBeard.visible = true
             axePoll.visible = true
+            axeSpike.visible = true
           } else if (eq === 'log') {
             heldLogGroup.visible = true
           } else if (eq === 'wood') {
@@ -4981,20 +5130,56 @@ export default function GameCanvas() {
           }
         }
 
-        // Attack animation - swing weapon forward (first-person)
+        // Attack animation - weapon-specific swing/slash arcs for better impact.
         if (attackTimer > 0) {
           attackTimer -= dt
           const p = 1 - attackTimer / ATTACK_COOLDOWN
           const swingA = Math.sin(p * Math.PI)
-          // Weapon swings forward+down. Base rot.x = 0.25; subtract to pitch forward.
-          weaponGroup.rotation.x = 0.25 - swingA * 1.0
-          // Small left-kick and recovery rotation for visual interest.
-          weaponGroup.rotation.z = -0.15 + swingA * 0.35
-          weaponGroup.position.z = -0.82 - swingA * 0.18
+          const recoil = Math.sin(p * Math.PI * 2)
+          const eqTool = eq ? ITEMS[eq]?.tool : undefined
+
+          if (hasWeapon) {
+            if (eqTool === 'sword') {
+              // Fast diagonal slash.
+              weaponGroup.rotation.x = 0.18 - swingA * 1.28
+              weaponGroup.rotation.y = -0.42 + swingA * 0.46
+              weaponGroup.rotation.z = -0.28 + swingA * 0.86
+              weaponGroup.position.x = 0.42 - swingA * 0.13
+              weaponGroup.position.y = -0.45 + Math.sin(p * Math.PI) * 0.06
+              weaponGroup.position.z = -0.82 - swingA * 0.24
+            } else if (eqTool === 'axe') {
+              // Heavier chopping arc.
+              weaponGroup.rotation.x = 0.34 - swingA * 1.5
+              weaponGroup.rotation.y = -0.24 + swingA * 0.2
+              weaponGroup.rotation.z = -0.08 + swingA * 0.54
+              weaponGroup.position.x = 0.42 - swingA * 0.08
+              weaponGroup.position.y = -0.45 + swingA * 0.1
+              weaponGroup.position.z = -0.82 - swingA * 0.29
+            } else if (eqTool === 'pickaxe') {
+              // Overhead miner strike with slight pullback.
+              weaponGroup.rotation.x = 0.52 - swingA * 1.8
+              weaponGroup.rotation.y = -0.28 + swingA * 0.12
+              weaponGroup.rotation.z = -0.18 + swingA * 0.3
+              weaponGroup.position.x = 0.42 - swingA * 0.05
+              weaponGroup.position.y = -0.45 + swingA * 0.13
+              weaponGroup.position.z = -0.82 - swingA * 0.2
+            } else {
+              // Generic melee swing (torch/club/other held weapons).
+              weaponGroup.rotation.x = 0.25 - swingA * 1.0
+              weaponGroup.rotation.y = -0.3 + swingA * 0.18
+              weaponGroup.rotation.z = -0.15 + swingA * 0.35
+              weaponGroup.position.x = 0.42 - swingA * 0.05
+              weaponGroup.position.y = -0.45 + swingA * 0.06
+              weaponGroup.position.z = -0.82 - swingA * 0.18
+            }
+            // Impact snap near the strike midpoint.
+            const impact = Math.max(0, 1 - Math.abs(p - 0.52) / 0.16)
+            weaponGroup.position.z -= impact * 0.06
+            weaponGroup.rotation.x -= impact * 0.15
+            weaponGroup.rotation.z += recoil * 0.04
+          }
+
           // Punch = shoulder rotates up-and-forward + elbow straightens.
-          // This mirrors real boxing mechanics: the whole arm pivots at the
-          // shoulder while the forearm extends, so the fist travels on a
-          // clean forward arc instead of the hand floating around.
           fistGroup.rotation.x = -0.5 + swingA * 0.55
           fistGroup.rotation.z = -0.12 + swingA * 0.15
           fistGroup.position.z = 0.28 - swingA * 0.32
@@ -5470,6 +5655,7 @@ export default function GameCanvas() {
             w.mesh.scale.setScalar(Math.max(0.05, 1 - p * 0.85))
             w.mesh.position.y = w.pos.y + Math.sin(p * Math.PI) * 0.28
             w.light.intensity = Math.max(0, 1.6 * (1 - p))
+            animateWormBody(w, 1.25 - p * 0.6)
             if (w.stateTimer <= 0) {
               const px = w.pos.x, py = heightAt(w.pos.x, w.pos.z), pz = w.pos.z
               removeWorm(w)
@@ -5573,7 +5759,7 @@ export default function GameCanvas() {
             w.body.rotation.x = Math.sin(w.crawlPhase) * 0.12 - Math.min(0.72, jumpArc * 0.2)
             w.body.rotation.z = Math.sin(w.crawlPhase * 0.7) * 0.08
             w.mouth.rotation.x = Math.sin(w.crawlPhase * 1.3) * 0.12 + Math.min(0.48, jumpArc * 0.14)
-            w.fins.forEach((fin, idx) => { fin.rotation.x = (fin.userData.baseRotX ?? 0) + Math.sin(w.crawlPhase + idx * 0.7) * 0.08 })
+            animateWormBody(w, 1)
             w.light.intensity = 1.25 + Math.sin(performance.now() * 0.01) * 0.25
             if (w.hurtTimer > 0) {
               w.hurtTimer -= dt
