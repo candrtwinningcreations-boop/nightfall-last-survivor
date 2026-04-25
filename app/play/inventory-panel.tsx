@@ -46,7 +46,6 @@ export default function InventoryPanel() {
   const torchMaxDurability = useGame(s => s.torchMaxDurability)
   const equipCosmetic = useGame(s => s.equipCosmetic)
   const setOffhand = useGame(s => s.setOffhand)
-  const setTorchDurability = useGame(s => s.setTorchDurability)
   const removeItem = useGame(s => s.removeItem)
   const addItem = useGame(s => s.addItem)
   const showToast = useGame(s => s.showToast)
@@ -141,7 +140,8 @@ export default function InventoryPanel() {
     if (!removeItem(id, 1)) return false
     if (offhandItem) addItem(offhandItem, 1)
     setOffhand(id)
-    setTorchDurability(torchMaxDurability)
+    // Keep the existing shared torch timer when moving a torch between inventory
+    // and offhand; equipping should not refill durability.
     showToast(`🔥 Equipped ${def.name} in offhand`)
     return true
   }

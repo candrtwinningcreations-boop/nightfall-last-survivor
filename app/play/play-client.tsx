@@ -177,6 +177,34 @@ export default function PlayClient() {
           localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, 'torch')
           localStorage.setItem(`nightfall:torchDurability:${sid || 'default'}`, String(TORCH_MAX_DURABILITY_SEC))
         } catch {}
+        // Persist the first-spawn flag immediately. Normal canvas autosave hooks
+        // may not be registered yet during initial load; without this write, a
+        // crash/reload before the first autosave could grant another starter torch.
+        const starterState = useGame.getState()
+        void fetch('/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            health: starterState.health,
+            level: starterState.level,
+            xp: starterState.xp,
+            posX: 0,
+            posY: 2,
+            posZ: 0,
+            timeOfDay: starterState.timeOfDay,
+            equippedItem: starterState.equippedItem,
+            offhandItem: starterState.offhandItem,
+            torchDurability: starterState.torchDurability,
+            hasReceivedStarterTorch: true,
+            inventory: starterState.inventory,
+            structures: starterState.structures,
+            deaths: starterState.deaths,
+            zombiesKilled: starterState.zombiesKilled,
+            serverId: sid || undefined,
+            guestId: guestIdRef.current || undefined,
+            guestName: guestNameRef.current || undefined,
+          }),
+        }).catch(() => {})
       }
       setLoaded(true)
     }).catch(() => setLoaded(true))

@@ -6,6 +6,8 @@ import { Heart, Sun, Moon, Hand, Skull, Flame } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { ItemIcon } from './item-icon'
 
+const BOSS_HEALTH_BAR_RENDER_RANGE_METERS = 75
+
 export default function Hud() {
   const health = useGame(s => s.health)
   const level = useGame(s => s.level)
@@ -58,7 +60,7 @@ export default function Hud() {
   }
   const torchPct = torchMaxDurability > 0 ? Math.max(0, Math.min(100, (torchDurability / torchMaxDurability) * 100)) : 0
   const torchTime = fmtCountdown(torchDurability)
-  const visibleBoss = boss && boss.dist <= 75 ? boss : null
+  const visibleBoss = boss && boss.dist <= BOSS_HEALTH_BAR_RENDER_RANGE_METERS ? boss : null
 
   // Health-based vignette: strong when low health
   const lowHealth = health / 100
@@ -127,7 +129,7 @@ export default function Hud() {
         )}
       </div>
 
-      {/* Huge boss bars — persistent while a boss exists */}
+      {/* Huge boss bars — shown only when the boss is within 75 meters */}
       {visibleBoss && visibleBoss.kind === 'worm' && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 pointer-events-none w-[min(720px,86vw)]">
           <div className="px-5 py-3 rounded-xl bg-black/75 backdrop-blur-sm border border-cyan-300/35 shadow-[0_0_46px_-12px_rgba(103,232,249,0.85)]">

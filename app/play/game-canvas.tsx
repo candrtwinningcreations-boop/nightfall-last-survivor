@@ -28,10 +28,13 @@ const ZOMBIE_DAMAGE = 8
 const ZOMBIE_ATTACK_RANGE = 1.8
 const MAX_ZOMBIES = 8
 // Zombies should feel like the common night threat. Keep their average spawn
-// delay just below vampires (38–72s vs. vampires' 45–75s) without making the
-// horde overwhelming.
-const ZOMBIE_SPAWN_MIN_DELAY = 38
-const ZOMBIE_SPAWN_RANDOM_DELAY = 34
+// delay a little below vampires (34–64s vs. vampires' 48–78s) without making
+// the horde overwhelming.
+const ZOMBIE_SPAWN_MIN_DELAY = 34
+const ZOMBIE_SPAWN_RANDOM_DELAY = 30
+const VAMPIRE_SPAWN_MIN_DELAY = 48
+const VAMPIRE_SPAWN_RANDOM_DELAY = 30
+const BOSS_HEALTH_BAR_RENDER_RANGE_METERS = 75
 const TORCH_ATTACK_DURABILITY_COST_SEC = 2 * 60
 const TORCH_DURABILITY_PERSIST_INTERVAL_MS = 5000
 // Torch light is intentionally measured in the same player-facing "feet" scale
@@ -1512,7 +1515,7 @@ export default function GameCanvas() {
     const heldTorchGroup = buildHeldTorchGroup()
     // Main-hand torch viewmodel: smaller so it still communicates light/fire
     // without filling the center of the first-person screen.
-    heldTorchGroup.scale.setScalar(0.72)
+    heldTorchGroup.scale.setScalar(0.58)
     heldTorchGroup.visible = false
     weaponGroup.add(heldTorchGroup)
 
@@ -1715,9 +1718,9 @@ export default function GameCanvas() {
     // Offhand torch: separate left-hand view model so the main hand can still
     // swing a weapon/tool while the light source is equipped.
     const offhandTorchGroup = buildHeldTorchGroup()
-    offhandTorchGroup.position.set(-0.46, -0.38, -0.78)
+    offhandTorchGroup.position.set(-0.52, -0.44, -0.84)
     offhandTorchGroup.rotation.set(0.4, 0.2, 0.22)
-    offhandTorchGroup.scale.setScalar(0.78)
+    offhandTorchGroup.scale.setScalar(0.62)
     offhandTorchGroup.visible = false
     camera.add(offhandTorchGroup)
 
@@ -4013,7 +4016,7 @@ export default function GameCanvas() {
     let timeCycleOriginMs = Date.now() - timeOfDayToCycleSeconds(timeOfDayAcc) * 1000
     let wasNight = isNightTimeValue(timeOfDayAcc)
     let zombieSpawnTimer = ZOMBIE_SPAWN_MIN_DELAY
-    let vampireSpawnTimer = 30
+    let vampireSpawnTimer = VAMPIRE_SPAWN_MIN_DELAY
     // ORC is a rare daytime cave guardian, tethered to its cave entrance.
     let orcSpawnTimer = 140 + Math.random() * 90
     // Goblin first sighting happens a few minutes in; respawns are even rarer.
@@ -5158,7 +5161,7 @@ export default function GameCanvas() {
         if (isNightNow && isWorldAuthority) {
           vampireSpawnTimer -= dt
           if (vampireSpawnTimer <= 0) {
-            vampireSpawnTimer = 45 + Math.random() * 30
+            vampireSpawnTimer = VAMPIRE_SPAWN_MIN_DELAY + Math.random() * VAMPIRE_SPAWN_RANDOM_DELAY
             spawnVampire()
           }
         }
@@ -5796,7 +5799,7 @@ export default function GameCanvas() {
             if (d < 40) best = { name: 'ORC', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc' }
           }
           ;(window as any).__nightfall_nearestEnemy = best
-          ;(window as any).__nightfall_boss = boss
+          ;(window as any).__nightfall_boss = boss && boss.dist <= BOSS_HEALTH_BAR_RENDER_RANGE_METERS ? boss : null
         }
 
         // Flag whether the player is standing near any furnace so the
