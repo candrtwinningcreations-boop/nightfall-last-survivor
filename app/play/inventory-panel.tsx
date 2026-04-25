@@ -4,7 +4,7 @@ import { useGame, type CosmeticState } from '@/lib/game/store'
 import { ITEMS, RARITY_COLOR, SHOP_LISTINGS, xpForNextLevel } from '@/lib/game/items'
 import type { InventorySlot, ItemId, CosmeticSlot, ItemDef } from '@/lib/game/types'
 import { X, Backpack, Shirt, ShoppingBag, User, Heart, Skull, Swords, Star, Lock, Coins, Flame } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type DragEvent } from 'react'
 import { ItemIcon } from './item-icon'
 
 const COSMETIC_SLOTS: { slot: CosmeticSlot; label: string; accept: ItemId[]; hint: string }[] = [
@@ -52,14 +52,24 @@ export default function InventoryPanel() {
   const showToast = useGame(s => s.showToast)
 
   const [dragFrom, setDragFrom] = useState<number | null>(null)
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
   const [tab, setTab] = useState<'inventory' | 'character' | 'shop'>('inventory')
 
   const xpNeeded = xpForNextLevel(level)
   const xpPct = Math.min(100, (xp / xpNeeded) * 100)
   const torchPct = torchMaxDurability > 0 ? Math.max(0, Math.min(100, (torchDurability / torchMaxDurability) * 100)) : 0
   const torchTime = `${Math.floor(Math.max(0, torchDurability) / 60)}:${Math.round(Math.max(0, torchDurability) % 60).toString().padStart(2, '0')}`
+  const draggedItemId = dragFrom !== null ? (inventory[dragFrom]?.id ?? null) : null
 
-  const handleDragStart = (i: number) => setDragFrom(i)
+  const handleDragStart = (i: number, e?: DragEvent<HTMLElement>) => {
+    setDragFrom(i)
+    setDragOverTarget(null)
+    const id = inventory[i]?.id
+    if (e?.dataTransfer && id) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', id)
+    }
+  }
   const handleDrop = (i: number) => {
     if (dragFrom === null || dragFrom === i) { setDragFrom(null); return }
     const inv = [...inventory]
@@ -82,20 +92,36 @@ export default function InventoryPanel() {
     setInventory(inv)
     setHotbar(hotbarIndex)
     setDragFrom(null)
+    setDragOverTarget(null)
+  }
+
+  const clearDragState = () => {
+    setDragFrom(null)
+    setDragOverTarget(null)
+  }
+
+  const canDropCosmetic = (slot: CosmeticSlot, id: ItemId | null = draggedItemId) => !!id && ITEMS[id]?.cosmeticSlot === slot
+  const canDropOffhand = (id: ItemId | null = draggedItemId) => !!id && ITEMS[id]?.offhand === 'torch'
+
+  const handleSlotDragLeave = (e: DragEvent<HTMLElement>) => {
+    const next = e.relatedTarget as Node | null
+    if (!next || !e.currentTarget.contains(next)) setDragOverTarget(null)
   }
 
   // Equip a cosmetic from the inventory (removes it from inventory, stores in cosmetics)
-  const tryEquipCosmetic = (id: ItemId) => {
+  const tryEquipCosmetic = (id: ItemId, targetSlot?: CosmeticSlot) => {
     const def = ITEMS[id]
-    if (!def.cosmeticSlot) return
+    if (!def.cosmeticSlot) return false
     const slot = def.cosmeticSlot
+    if (targetSlot && targetSlot !== slot) return false
     // Return whatever was already equipped (back to inventory so the player
     // doesn't lose it when swapping tiers).
     const current = cosmetics[slot]
     if (current) addItem(current.id, 1)
-    if (!removeItem(id, 1)) return
+    if (!removeItem(id, 1)) return false
     equipCosmetic(slot, id)
     showToast(`👕 Equipped ${def.name}`)
+    return true
   }
 
   const unequipCosmetic = (slot: CosmeticSlot) => {
@@ -111,12 +137,25 @@ export default function InventoryPanel() {
 
   const tryEquipOffhand = (id: ItemId) => {
     const def = ITEMS[id]
-    if (def.offhand !== 'torch') return
-    if (!removeItem(id, 1)) return
+    if (def.offhand !== 'torch') return false
+    if (!removeItem(id, 1)) return false
     if (offhandItem) addItem(offhandItem, 1)
     setOffhand(id)
     setTorchDurability(torchMaxDurability)
     showToast(`🔥 Equipped ${def.name} in offhand`)
+    return true
+  }
+
+  const dropOnCosmeticSlot = (slot: CosmeticSlot) => {
+    const id = draggedItemId
+    if (id && tryEquipCosmetic(id, slot)) clearDragState()
+    else setDragOverTarget(null)
+  }
+
+  const dropOnOffhand = () => {
+    const id = draggedItemId
+    if (id && tryEquipOffhand(id)) clearDragState()
+    else setDragOverTarget(null)
   }
 
   const unequipOffhand = () => {
@@ -181,7 +220,7 @@ export default function InventoryPanel() {
           {tab === 'inventory' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="md:col-span-2">
-                <p className="text-xs text-zinc-500 mb-3 font-mono">Drag items to rearrange. First row (1-5) is your hotbar. Double-click cosmetics to wear or torches to equip offhand.</p>
+                <p className="text-xs text-zinc-500 mb-3 font-mono">Drag items to rearrange. Drop clothing/armor onto Worn slots or a Torch onto Offhand — valid targets glow. Double-click still works.</p>
                 <div className="grid grid-cols-6 gap-2">
                   {inventory.map((slot: InventorySlot, i: number) => {
                     const def = slot?.id ? ITEMS[slot.id] : null
@@ -191,7 +230,8 @@ export default function InventoryPanel() {
                       <div
                         key={i}
                         draggable={!!def}
-                        onDragStart={() => handleDragStart(i)}
+                        onDragStart={(e) => handleDragStart(i, e)}
+                        onDragEnd={clearDragState}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={() => handleDrop(i)}
                         onClick={() => { if (isHotbar) setHotbar(i) }}
@@ -253,11 +293,36 @@ export default function InventoryPanel() {
                         <button
                           key={cs.slot}
                           onClick={() => eq && unequipCosmetic(cs.slot)}
-                          className="aspect-square rounded-md bg-zinc-900/70 border border-white/10 hover:bg-zinc-800 text-2xl flex items-center justify-center relative"
+                          onDragEnter={(e) => {
+                            if (!canDropCosmetic(cs.slot)) return
+                            e.preventDefault()
+                            setDragOverTarget(`cosmetic:${cs.slot}`)
+                          }}
+                          onDragOver={(e) => {
+                            if (!canDropCosmetic(cs.slot)) return
+                            e.preventDefault()
+                            e.dataTransfer.dropEffect = 'move'
+                            setDragOverTarget(`cosmetic:${cs.slot}`)
+                          }}
+                          onDragLeave={handleSlotDragLeave}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            dropOnCosmeticSlot(cs.slot)
+                          }}
+                          className={`aspect-square rounded-md text-2xl flex items-center justify-center relative overflow-hidden transition-all duration-150 border ${
+                            dragOverTarget === `cosmetic:${cs.slot}`
+                              ? 'bg-pink-500/20 border-pink-300 ring-2 ring-pink-300/70 scale-105 shadow-[0_0_24px_rgba(244,114,182,0.55)]'
+                              : canDropCosmetic(cs.slot)
+                                ? 'bg-pink-500/10 border-pink-400/50 ring-1 ring-pink-400/25 shadow-[0_0_14px_rgba(244,114,182,0.25)]'
+                                : 'bg-zinc-900/70 border-white/10 hover:bg-zinc-800'
+                          }`}
                           style={def?.rarity ? { boxShadow: `0 0 0 2px ${RARITY_COLOR[def.rarity]} inset` } : undefined}
-                          title={describeItem(def, eq && eq.maxDurability > 0 ? `Durability: ${eq.durability}/${eq.maxDurability}\n— click to unequip` : (def ? '— click to unequip' : `${cs.label}: empty`))}
+                          title={describeItem(def, eq && eq.maxDurability > 0 ? `Durability: ${eq.durability}/${eq.maxDurability}\n— click to unequip\n— drag matching clothing here to swap` : (def ? '— click to unequip\n— drag matching clothing here to swap' : `${cs.label}: empty\nDrag ${cs.hint.toLowerCase()} here to wear`))}
                         >
-                          {eq ? <ItemIcon id={eq.id} size={36} /> : <span className="text-[9px] font-mono text-zinc-600">{cs.label}</span>}
+                          {canDropCosmetic(cs.slot) && !eq && (
+                            <div className="pointer-events-none absolute inset-1 rounded border border-dashed border-pink-300/70 animate-pulse" />
+                          )}
+                          {eq ? <ItemIcon id={eq.id} size={36} /> : <span className={`text-[9px] font-mono ${canDropCosmetic(cs.slot) ? 'text-pink-100' : 'text-zinc-600'}`}>{canDropCosmetic(cs.slot) ? 'Drop' : cs.label}</span>}
                           {/* Durability bar along the bottom edge */}
                           {eq && eq.maxDurability > 0 && (
                             <div className="absolute bottom-0.5 left-1 right-1 h-1 bg-black/60 rounded-full overflow-hidden">
@@ -279,14 +344,39 @@ export default function InventoryPanel() {
                   <h4 className="text-xs uppercase tracking-widest text-zinc-400 mb-2 flex items-center gap-1.5"><Flame className="w-3.5 h-3.5 text-orange-300" /> Offhand</h4>
                   <button
                     onClick={unequipOffhand}
-                    disabled={!offhandItem}
-                    className="relative w-full h-16 rounded-md bg-zinc-900/70 border border-white/10 hover:bg-zinc-800 disabled:hover:bg-zinc-900/70 disabled:opacity-70 flex items-center justify-center gap-3 text-left overflow-hidden"
-                    title={offhandItem ? `${ITEMS[offhandItem].name}\nDurability: ${torchTime} remaining\n— click to unequip` : 'Empty offhand\nDouble-click a Torch in your inventory to equip it here.'}
+                    disabled={!offhandItem && !canDropOffhand()}
+                    onDragEnter={(e) => {
+                      if (!canDropOffhand()) return
+                      e.preventDefault()
+                      setDragOverTarget('offhand')
+                    }}
+                    onDragOver={(e) => {
+                      if (!canDropOffhand()) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      setDragOverTarget('offhand')
+                    }}
+                    onDragLeave={handleSlotDragLeave}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      dropOnOffhand()
+                    }}
+                    className={`relative w-full h-16 rounded-md border flex items-center justify-center gap-3 text-left overflow-hidden transition-all duration-150 ${
+                      dragOverTarget === 'offhand'
+                        ? 'bg-orange-500/20 border-orange-200 ring-2 ring-orange-300/80 scale-[1.02] shadow-[0_0_28px_rgba(251,146,60,0.65)]'
+                        : canDropOffhand()
+                          ? 'bg-orange-500/10 border-orange-400/60 ring-1 ring-orange-400/30 shadow-[0_0_18px_rgba(251,146,60,0.35)]'
+                          : 'bg-zinc-900/70 border-white/10 hover:bg-zinc-800 disabled:hover:bg-zinc-900/70 disabled:opacity-70'
+                    }`}
+                    title={offhandItem ? `${ITEMS[offhandItem].name}\nDurability: ${torchTime} remaining\n— click to unequip\n— drag another Torch here to replace it` : 'Empty offhand\nDrag a Torch here from inventory, or double-click it.'}
                   >
-                    {offhandItem ? <ItemIcon id={offhandItem} size={42} /> : <Flame className="w-6 h-6 text-zinc-700" />}
+                    {canDropOffhand() && (
+                      <div className="pointer-events-none absolute inset-1 rounded border border-dashed border-orange-200/80 animate-pulse" />
+                    )}
+                    {offhandItem ? <ItemIcon id={offhandItem} size={42} /> : <Flame className={`w-6 h-6 ${canDropOffhand() ? 'text-orange-200' : 'text-zinc-700'}`} />}
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold text-white">{offhandItem ? ITEMS[offhandItem].name : 'Empty'}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono">{offhandItem === 'torch' ? `Durability ${torchTime}` : 'Main hand remains free'}</div>
+                      <div className="text-xs font-semibold text-white">{offhandItem ? ITEMS[offhandItem].name : (canDropOffhand() ? 'Drop Torch' : 'Empty')}</div>
+                      <div className={`text-[10px] font-mono ${canDropOffhand() ? 'text-orange-100' : 'text-zinc-500'}`}>{offhandItem === 'torch' ? `Durability ${torchTime}` : canDropOffhand() ? 'Release to equip light' : 'Main hand remains free'}</div>
                     </div>
                     {offhandItem === 'torch' && (
                       <div className="absolute bottom-1 left-3 right-3 h-1 bg-black/60 rounded-full overflow-hidden">

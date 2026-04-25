@@ -30,6 +30,15 @@ const MAX_ZOMBIES = 8
 const ZOMBIE_SPAWN_MIN_DELAY = 75
 const ZOMBIE_SPAWN_RANDOM_DELAY = 55
 const TORCH_ATTACK_DURABILITY_COST_SEC = 2 * 60
+// Torch light is intentionally measured in the same player-facing "feet" scale
+// used by item text: a lit torch should clearly illuminate a 20-foot radius.
+const TORCH_LIGHT_RANGE_FT = 20
+const TORCH_LIGHT_INTENSITY = 3.35
+const TORCH_LIGHT_DECAY = 1.45
+const TORCH_VIEWMODEL_GLOW_RANGE = 7.5
+const PLAYER_SPIKE_TRAP_DPS = 5
+const PLAYER_SPIKE_TRAP_STUN_SEC = 3
+const PLAYER_SPIKE_TRAP_STUN_COOLDOWN_SEC = 10
 const FIRE_DURATION_SEC = 5
 const FIRE_DPS = 5
 // Vampires: boss-class enemies that appear at night
@@ -334,7 +343,8 @@ export default function GameCanvas() {
     )
     moonGlow.renderOrder = -1
     scene.add(moonGlow)
-    const playerTorch = new THREE.PointLight(0xffdda0, 0.0, 14, 2)
+    const playerTorch = new THREE.PointLight(0xffdda0, 0.0, TORCH_LIGHT_RANGE_FT, TORCH_LIGHT_DECAY)
+    playerTorch.castShadow = false
     scene.add(playerTorch)
 
     // --- Skydome ---
@@ -1486,7 +1496,7 @@ export default function GameCanvas() {
         ;(spark as any).__baseY = spark.position.y
         fire.add(spark)
       }
-      const glow = new THREE.PointLight(0xff8a28, 1.05, 5.2, 2)
+      const glow = new THREE.PointLight(0xff8a28, 1.35, TORCH_VIEWMODEL_GLOW_RANGE, 1.7)
       glow.position.y = 0.18
       fire.add(glow)
       ;(g as any).__flame = fire
@@ -1739,6 +1749,9 @@ export default function GameCanvas() {
     let pvpDeathDropped = false
     let playerBurnUntil = 0
     let playerBurnTick = 0
+    let playerTrapDamageBank = 0
+    let playerStunnedUntil = 0
+    const playerTrapStunCooldowns = new Map<string, number>()
     const burningTargets = new Map<string, { mesh: THREE.Object3D; effect: THREE.Group; until: number; tick: number; kind: 'zombie' | 'vampire' | 'goblin' | 'worm' | 'orc'; entity: any }>()
     const burnFlameMat = new THREE.MeshBasicMaterial({ color: 0xff6a12, transparent: true, opacity: 0.72, depthWrite: false })
     const burnCoreMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.85, depthWrite: false })
@@ -3111,7 +3124,7 @@ export default function GameCanvas() {
     }
     // Build two damage overlay planes that sit just in front of each wall face.
     // Returns the two meshes and their materials so damage can be updated.
-    function attachDamageOverlays(parent: THREE.Group, W: number, H: number, T: number) {
+    function attachDamageOverlays(parent: THREE.Object3D, W: number, H: number, T: number) {
       const mats: THREE.MeshBasicMaterial[] = []
       const meshes: THREE.Mesh[] = []
       const geo = new THREE.PlaneGeometry(W * 0.98, H * 0.98)
@@ -3130,6 +3143,14 @@ export default function GameCanvas() {
       meshes.push(mF, mB)
       return { mats, meshes }
     }
+    function attachHorizontalDamageOverlay(parent: THREE.Object3D, W: number, D: number, y: number) {
+      const mat = new THREE.MeshBasicMaterial({ map: crackTextures[0], transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.96, D * 0.96), mat)
+      mesh.rotation.x = -Math.PI / 2
+      mesh.position.y = y
+      parent.add(mesh)
+      return { mats: [mat], meshes: [mesh] }
+    }
     // Apply a damage ratio (hp/maxHp) to a wall group by choosing the right
     // crack texture and fading opacity to taste.
     function applyWallDamage(sm: StructureMesh, ratio: number) {
@@ -3138,8 +3159,10 @@ export default function GameCanvas() {
       const clamped = Math.max(0, Math.min(1, ratio))
       const lvl = damageLevelForRatio(clamped)
       const tex = crackTextures[lvl]
-      // Opacity fades up as damage increases
-      const op = lvl === 0 ? 0 : lvl === 1 ? 0.45 : lvl === 2 ? 0.7 : 0.9
+      // Opacity scales continuously with damage so every hit leaves a little
+      // more visible cracking, even before the texture tier changes.
+      const damage = 1 - clamped
+      const op = lvl === 0 ? 0 : Math.min(0.95, 0.22 + damage * 0.8)
       for (const m of meta.mats) {
         m.map = tex
         m.opacity = op
@@ -3206,25 +3229,31 @@ export default function GameCanvas() {
     function addStructureMesh(s: StructureData) {
       let obj: THREE.Object3D
       let wallMeta: { W: number; H: number; T: number } | null = null
+      let surfaceMeta: { kind: 'vertical'; W: number; H: number; T: number; barTop: number } | { kind: 'horizontal'; W: number; D: number; y: number; barTop: number } | null = null
       if (s.kind === 'wall') {
         const g = buildWoodWallGroup()
-        wallMeta = (g as any).__wallBounds
+        wallMeta = (g as any).__wallBounds as { W: number; H: number; T: number }
+        surfaceMeta = { kind: 'vertical', W: wallMeta.W, H: wallMeta.H, T: wallMeta.T, barTop: wallMeta.H / 2 }
         obj = g
       } else if (s.kind === 'floor') {
         const m = new THREE.Mesh(floorGeo, woodFloorMat)
         m.castShadow = true; m.receiveShadow = true
+        surfaceMeta = { kind: 'horizontal', W: 2, D: 2, y: 0.09, barTop: 0.12 }
         obj = m
       } else if (s.kind === 'log_wall') {
         const g = buildLogWallGroup()
-        wallMeta = (g as any).__wallBounds
+        wallMeta = (g as any).__wallBounds as { W: number; H: number; T: number }
+        surfaceMeta = { kind: 'vertical', W: wallMeta.W, H: wallMeta.H, T: wallMeta.T, barTop: wallMeta.H / 2 }
         obj = g
       } else if (s.kind === 'stone_wall') {
         const g = buildStoneWallGroup()
-        wallMeta = (g as any).__wallBounds
+        wallMeta = (g as any).__wallBounds as { W: number; H: number; T: number }
+        surfaceMeta = { kind: 'vertical', W: wallMeta.W, H: wallMeta.H, T: wallMeta.T, barTop: wallMeta.H / 2 }
         obj = g
       } else if (s.kind === 'log_floor') {
         const m = new THREE.Mesh(logFloorGeo, logFloorMat)
         m.castShadow = true; m.receiveShadow = true
+        surfaceMeta = { kind: 'horizontal', W: 2, D: 2, y: 0.12, barTop: 0.15 }
         obj = m
       } else if (s.kind === 'spike_trap') {
         const g = new THREE.Group()
@@ -3241,6 +3270,7 @@ export default function GameCanvas() {
             g.add(sp)
           }
         }
+        surfaceMeta = { kind: 'horizontal', W: 1.7, D: 1.7, y: 0.14, barTop: 0.65 }
         obj = g
       } else if (s.kind === 'furnace') {
         // Stone furnace / forge — enables smelting when player is nearby.
@@ -3265,9 +3295,11 @@ export default function GameCanvas() {
         glow.position.set(0, -0.2, 0.7)
         g.add(glow)
         ;(g as any).__furnaceGlow = glow
+        surfaceMeta = { kind: 'vertical', W: 1.6, H: 1.8, T: 1.25, barTop: 1.25 }
         obj = g
       } else if (s.kind === 'bed') {
         obj = buildBedGroup(!!s.spawn)
+        surfaceMeta = { kind: 'horizontal', W: 1.8, D: 2.35, y: 0.62, barTop: 0.75 }
       } else {
         // tree_stand — stored position.y = groundY + 3.0 (platform centre).
         // Legs reach down from the platform to the ground; rungs follow.
@@ -3291,14 +3323,17 @@ export default function GameCanvas() {
           r.castShadow = true
           g.add(r)
         }
+        surfaceMeta = { kind: 'vertical', W: 2.4, H: 3.1, T: 2.4, barTop: 0.35 }
         obj = g
       }
-      // Attach damage overlay + health bar to walls (they're the only
-      // player-attackable structures for now).
-      if (wallMeta && (obj instanceof THREE.Group)) {
-        const dmg = attachDamageOverlays(obj, wallMeta.W, wallMeta.H, wallMeta.T)
+      // Attach damage overlays + health bars to every player-built structure.
+      // Walls get front/back cracks; floors/traps/beds get top-surface cracks.
+      if (surfaceMeta) {
+        const dmg = surfaceMeta.kind === 'vertical'
+          ? attachDamageOverlays(obj, surfaceMeta.W, surfaceMeta.H, surfaceMeta.T)
+          : attachHorizontalDamageOverlay(obj, surfaceMeta.W, surfaceMeta.D, surfaceMeta.y)
         ;(obj as any).__wallDamage = dmg
-        const bar = buildHealthBarSprite(wallMeta.H / 2)
+        const bar = buildHealthBarSprite(surfaceMeta.barTop)
         obj.add(bar.sprite)
         ;(obj as any).__healthBar = bar
       }
@@ -3776,6 +3811,7 @@ export default function GameCanvas() {
         ry: buildGhost.rotation.y,
         hp: maxHp,
         maxHp,
+        ownerId: ownMemberKey() || worldClientId,
       }
       s.addStructure(st)
       addStructureMesh(st)
@@ -4252,6 +4288,14 @@ export default function GameCanvas() {
         removeStructureMesh(String(p.id))
       } else if (evt.type === 'structure_update') {
         useGame.getState().updateStructure(String(p.id), p.patch || {})
+        const sm = structureMeshes.get(String(p.id))
+        const st = useGame.getState().structures.find(ss => ss.id === String(p.id))
+        if (sm && st) {
+          const maxHp = st.maxHp ?? STRUCT_HP[st.kind] ?? 20
+          const hp = st.hp ?? maxHp
+          applyWallDamage(sm, hp / maxHp)
+          applyHealthBar(sm, hp, maxHp)
+        }
         updateBedSpawnMarkers()
       } else if (evt.type === 'bed_spawn_set') {
         const id = String(p.id || '')
@@ -4487,10 +4531,11 @@ export default function GameCanvas() {
       const hasOffhandTorch = lightState.mode !== 'dead' && lightState.offhandItem === 'torch'
       const hasMainTorch = lightState.mode !== 'dead' && lightState.equippedItem === 'torch'
       if (lightState.mode !== 'dead' && (hasOffhandTorch || hasMainTorch || isNightNow)) {
-        const flicker = Math.sin(performance.now() * 0.012) * 0.18 + Math.sin(performance.now() * 0.031) * 0.08
-        playerTorch.intensity = (hasOffhandTorch || hasMainTorch) ? 2.15 + flicker : 0.45
-        playerTorch.distance = (hasOffhandTorch || hasMainTorch) ? 20 : 9
-        playerTorch.position.set(playerPos.x, playerPos.y + 0.25, playerPos.z)
+        const flicker = Math.sin(performance.now() * 0.012) * 0.26 + Math.sin(performance.now() * 0.031) * 0.12
+        playerTorch.intensity = (hasOffhandTorch || hasMainTorch) ? TORCH_LIGHT_INTENSITY + flicker : 0.45
+        playerTorch.distance = (hasOffhandTorch || hasMainTorch) ? TORCH_LIGHT_RANGE_FT : 9
+        playerTorch.decay = (hasOffhandTorch || hasMainTorch) ? TORCH_LIGHT_DECAY : 2
+        playerTorch.position.set(playerPos.x, playerPos.y + 0.35, playerPos.z)
       } else {
         playerTorch.intensity = 0
       }
@@ -4550,7 +4595,9 @@ export default function GameCanvas() {
         // Camera's forward direction in world space (matches the (fx,fz)
         // formula used by the camera block below).  Pressing W should move
         // the player toward wherever the camera is looking.
-        const speed = input.sprint ? SPRINT_SPEED : WALK_SPEED
+        const nowMs = performance.now()
+        const isPlayerStunned = nowMs < playerStunnedUntil
+        const speed = isPlayerStunned ? 0 : (input.sprint ? SPRINT_SPEED : WALK_SPEED)
         const forward = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw))
         const right = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw))
         const wish = new THREE.Vector3()
@@ -4582,7 +4629,7 @@ export default function GameCanvas() {
         playerVel.x = wish.x
         playerVel.z = wish.z
         playerVel.y -= GRAVITY * dt
-        if (input.jump && onGround) {
+        if (input.jump && onGround && !isPlayerStunned) {
           playerVel.y = JUMP_VELOCITY
           onGround = false
         }
@@ -4691,6 +4738,41 @@ export default function GameCanvas() {
           onGround = true
         } else {
           onGround = false
+        }
+
+        // PvP spike traps: hurt and briefly stun players who are not the placer.
+        // Damage is applied locally to the victim, matching the existing PvP hit model.
+        const ownId = ownMemberKey() || worldClientId
+        let standingOnEnemyTrap: StructureData | null = null
+        for (const st of useGame.getState().structures) {
+          if (st.kind !== 'spike_trap') continue
+          // Legacy/offline traps without ownerId are treated as the player's own
+          // trap so old saves do not unexpectedly punish the placer.
+          if (!st.ownerId || st.ownerId === ownId) continue
+          const dx = playerPos.x - st.x
+          const dz = playerPos.z - st.z
+          if (Math.abs(dx) <= 0.85 + PLAYER_RADIUS && Math.abs(dz) <= 0.85 + PLAYER_RADIUS) {
+            standingOnEnemyTrap = st
+            break
+          }
+        }
+        if (standingOnEnemyTrap && useGame.getState().mode !== 'dead') {
+          playerTrapDamageBank += PLAYER_SPIKE_TRAP_DPS * dt
+          const wholeDamage = Math.floor(playerTrapDamageBank)
+          if (wholeDamage > 0) {
+            playerTrapDamageBank -= wholeDamage
+            const before = useGame.getState().health
+            state.takeDamage(wholeDamage)
+            if (before > 0 && useGame.getState().health <= 0) dropAllPlayerItems('Impaled by a spike trap.')
+          }
+          const nextAllowed = playerTrapStunCooldowns.get(standingOnEnemyTrap.id) ?? 0
+          if (nowMs >= nextAllowed) {
+            playerStunnedUntil = Math.max(playerStunnedUntil, nowMs + PLAYER_SPIKE_TRAP_STUN_SEC * 1000)
+            playerTrapStunCooldowns.set(standingOnEnemyTrap.id, nowMs + PLAYER_SPIKE_TRAP_STUN_COOLDOWN_SEC * 1000)
+            state.showToast('🪤 Spike trap! Stunned for 3 seconds.')
+          }
+        } else {
+          playerTrapDamageBank = 0
         }
 
         // Update third-person character position & orientation
@@ -6132,18 +6214,37 @@ export default function GameCanvas() {
         }
       }
 
-      // Check structures (walls) — players can break walls by attacking them.
-      // Wood walls take ~20 hits, log walls ~30, stone walls ~40. Specialized
-      // tools (axe on wood, pickaxe on stone) deal bonus damage per swing.
+      // Check structures — every buildable can now be damaged, shows cracks,
+      // and breaks when its HP reaches zero. Axes are best against wood builds;
+      // pickaxes are best against stone/metal-heavy builds.
       {
+        const structureName = (kind: StructureKind) => {
+          if (kind === 'wall') return 'Wooden wall'
+          if (kind === 'floor') return 'Wooden floor'
+          if (kind === 'log_wall') return 'Log wall'
+          if (kind === 'log_floor') return 'Log floor'
+          if (kind === 'stone_wall') return 'Stone wall'
+          if (kind === 'spike_trap') return 'Spike trap'
+          if (kind === 'furnace') return 'Stone furnace'
+          if (kind === 'bed') return 'Survivor bed'
+          return 'Tree stand'
+        }
+        const dropStructureRefund = (kind: StructureKind, x: number, y: number, z: number) => {
+          if (kind === 'wall' || kind === 'floor') dropItemToWorld('wood', 1, x, y, z)
+          else if (kind === 'log_wall' || kind === 'log_floor') dropItemToWorld('wood', 2, x, y, z)
+          else if (kind === 'stone_wall') dropItemToWorld('stone', 2, x, y, z)
+          else if (kind === 'spike_trap') { dropItemToWorld('wood', 1, x, y, z); dropItemToWorld('stone', 1, x, y, z) }
+          else if (kind === 'furnace') dropItemToWorld('stone', 3, x, y, z)
+          else if (kind === 'bed') { dropItemToWorld('wood', 3, x, y, z); dropItemToWorld('sap', 1, x, y, z) }
+          else if (kind === 'tree_stand') dropItemToWorld('wood', 4, x, y, z)
+        }
         const structTargets: THREE.Object3D[] = []
         const structRefs: { mesh: THREE.Object3D; sm: StructureMesh }[] = []
         for (const sm of structureMeshes.values()) {
-          if (sm.kind !== 'wall' && sm.kind !== 'log_wall' && sm.kind !== 'stone_wall') continue
           const ddx = sm.mesh.position.x - playerPos.x
           const ddz = sm.mesh.position.z - playerPos.z
-          // Broad-phase cull — only raycast walls near the player.
-          if (ddx * ddx + ddz * ddz > (REACH + 3) * (REACH + 3)) continue
+          // Broad-phase cull — only raycast structures near the player.
+          if (ddx * ddx + ddz * ddz > (REACH + 4) * (REACH + 4)) continue
           structTargets.push(sm.mesh)
           structRefs.push({ mesh: sm.mesh, sm })
         }
@@ -6156,15 +6257,13 @@ export default function GameCanvas() {
               const entry = structRefs.find(r => r.mesh === root)!
               const sm = entry.sm
               const kind = sm.kind
-              const isAxe = eq === 'stone_axe' || eq === 'iron_axe'
-              const isPick = eq === 'stone_pickaxe' || eq === 'iron_pickaxe'
-              // Damage: 1 base per hit. Axes hit wood walls harder, pickaxes
-              // shred stone walls. Iron tools edge out stone by 1 more.
+              const woodLike = kind === 'wall' || kind === 'floor' || kind === 'log_wall' || kind === 'log_floor' || kind === 'bed' || kind === 'tree_stand'
+              const stoneLike = kind === 'stone_wall' || kind === 'furnace' || kind === 'spike_trap'
               let structDmg = 1
-              if (kind === 'wall' || kind === 'log_wall') {
+              if (woodLike) {
                 if (eq === 'iron_axe') structDmg = 3
                 else if (eq === 'stone_axe') structDmg = 2
-              } else if (kind === 'stone_wall') {
+              } else if (stoneLike) {
                 if (eq === 'iron_pickaxe') structDmg = 3
                 else if (eq === 'stone_pickaxe') structDmg = 2
               }
@@ -6173,29 +6272,23 @@ export default function GameCanvas() {
               if (st) {
                 const maxHp = st.maxHp ?? STRUCT_HP[kind] ?? 20
                 const newHp = Math.max(0, (st.hp ?? maxHp) - structDmg)
-                // Tiny hit-shake — briefly scale down the mesh on each hit
+                // Tiny hit-shake — briefly scale down the mesh on each hit.
                 sm.mesh.scale.setScalar(0.97)
                 setTimeout(() => { if (sm.mesh) sm.mesh.scale.setScalar(1) }, 80)
+                applyWallDamage(sm, newHp / maxHp)
+                applyHealthBar(sm, newHp, maxHp)
                 if (newHp <= 0) {
                   // Drop a small refund of raw materials when broken.
                   const px = sm.mesh.position.x, pz = sm.mesh.position.z
                   const gy = heightAt(px, pz) + 0.5
-                  if (kind === 'wall') {
-                    dropItemToWorld('wood', 1, px, gy, pz)
-                  } else if (kind === 'log_wall') {
-                    dropItemToWorld('wood', 2, px, gy, pz)
-                  } else if (kind === 'stone_wall') {
-                    dropItemToWorld('stone', 2, px, gy, pz)
-                  }
+                  dropStructureRefund(kind, px, gy, pz)
                   useGame.getState().removeStructure(sm.id)
                   removeStructureMesh(sm.id)
                   queueWorldEvent('structure_remove', { id: sm.id })
-                  useGame.getState().showToast(`💥 ${kind === 'stone_wall' ? 'Stone wall' : kind === 'log_wall' ? 'Log wall' : 'Wooden wall'} broken!`)
+                  useGame.getState().showToast(`💥 ${structureName(kind)} broken!`)
                 } else {
                   useGame.getState().updateStructure(sm.id, { hp: newHp, maxHp })
                   queueWorldEvent('structure_update', { id: sm.id, patch: { hp: newHp, maxHp } })
-                  applyWallDamage(sm, newHp / maxHp)
-                  applyHealthBar(sm, newHp, maxHp)
                 }
                 return
               }

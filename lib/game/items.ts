@@ -6,7 +6,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   stone: { id: 'stone', name: 'Stone', icon: '🪨', image: '/items/stone.png', stack: 64, description: 'Mined from boulders with a pickaxe, or picked up off the ground.', color: '#9ca3af' },
   sap: { id: 'sap', name: 'Cactus Sap', icon: '🟠', image: '/items/sap.png', stack: 64, description: 'Sticky amber-gold desert sap harvested from cactus plants. Used for beds and survival crafting.', color: '#f59e0b' },
   glowstone: { id: 'glowstone', name: 'Glowstone', icon: '💎', image: '/items/glowstone.svg', stack: 16, description: 'A luminous crystal-gem dropped by The Worm. It hums with cold desert light.', color: '#67e8f9' },
-  torch: { id: 'torch', name: 'Torch', icon: '🔥', image: '/items/torch.svg', stack: 1, damage: 5, offhand: 'torch', maxDurability: 15 * 60, description: 'A hand torch crafted from 5 planks. Equip in offhand for light or main hand to ignite targets. Lasts 15 minutes; each hit costs 2 minutes.', color: '#fb923c' },
+  torch: { id: 'torch', name: 'Torch', icon: '🔥', image: '/items/torch.svg', stack: 1, damage: 5, offhand: 'torch', maxDurability: 15 * 60, description: 'A hand torch crafted from 5 planks. Equip in offhand for a bright 20-foot light radius or main hand to ignite targets. Lasts 15 minutes; each hit costs 2 minutes.', color: '#fb923c' },
 
   // Stone tools
   stone_pickaxe: { id: 'stone_pickaxe', name: 'Stone Pickaxe', icon: '⛏️', image: '/items/stone_pickaxe.png', stack: 1, damage: 15, tool: 'pickaxe', tier: 1, description: 'Mines stone and raw iron. 15 damage.', color: '#a1a1aa' },
@@ -34,7 +34,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   // --- Stone wall — mortared block wall, the toughest buildable barrier
   stone_wall: { id: 'stone_wall', name: 'Stone Wall', icon: '🧱', stack: 16, placeable: 'wall', description: 'Mortared stone blocks. 40 hits to break — the toughest wall you can build.', color: '#8a8a90' },
   log_floor: { id: 'log_floor', name: 'Log Floor', icon: '🟫', stack: 16, placeable: 'floor', description: 'Split-log platform, elevated above the ground.', color: '#734a2a' },
-  spike_trap: { id: 'spike_trap', name: 'Spike Trap', icon: '☘️', stack: 8, placeable: 'trap', description: 'Sharpened stakes. Damages any enemy that walks onto it.', color: '#b91c1c' },
+  spike_trap: { id: 'spike_trap', name: 'Spike Trap', icon: '☘️', stack: 8, placeable: 'trap', description: 'Sharpened stakes. Damages enemies and non-owner players that walk onto it; players are stunned briefly on a cooldown.', color: '#b91c1c' },
   tree_stand: { id: 'tree_stand', name: 'Tree Stand', icon: '🌲', stack: 4, placeable: 'stand', description: 'Elevated hunting platform with a ladder. Snipe enemies in safety.', color: '#365314' },
   bed: { id: 'bed', name: 'Survivor Bed', icon: '🛏️', stack: 4, placeable: 'bed', description: 'Place and interact with it to set a new respawn point.', color: '#7c2d12' },
 
@@ -102,7 +102,6 @@ export const RECIPES: Recipe[] = [
   // Stone — toughest wall, 40 HP. Requires a solid pile of stone.
   { id: 'stone_wall', name: 'Stone Wall', inputs: [{ id: 'stone', count: 8 }], output: { id: 'stone_wall', count: 1 } },
   { id: 'spike_trap', name: 'Spike Trap', inputs: [{ id: 'wood', count: 4 }, { id: 'stone', count: 2 }], output: { id: 'spike_trap', count: 1 } },
-  { id: 'tree_stand', name: 'Tree Stand', inputs: [{ id: 'wood', count: 12 }], output: { id: 'tree_stand', count: 1 } },
   { id: 'bed', name: 'Survivor Bed', inputs: [{ id: 'wood', count: 10 }, { id: 'sap', count: 5 }], output: { id: 'bed', count: 1 } },
 ]
 

@@ -112,6 +112,8 @@ export interface StructureData {
   // HP for the given kind (used for forward/backward compat with old saves).
   hp?: number
   maxHp?: number
+  // Multiplayer owner identity; used so traps can spare the player who placed them.
+  ownerId?: string
   // Beds can be marked as the active respawn point.
   spawn?: boolean
 }
