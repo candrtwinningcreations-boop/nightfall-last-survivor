@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
-import { useGame } from '@/lib/game/store'
+import { TORCH_MAX_DURABILITY_SEC, useGame } from '@/lib/game/store'
 import { heightAt, hash2Pub } from '@/lib/game/noise'
 import { FIST_DAMAGE, ITEMS, rollShirtRarity } from '@/lib/game/items'
 import type { ItemId, StructureData, StructureKind } from '@/lib/game/types'
@@ -26,7 +26,12 @@ const ZOMBIE_SPEED = 3.2
 const ZOMBIE_HEALTH = 50
 const ZOMBIE_DAMAGE = 8
 const ZOMBIE_ATTACK_RANGE = 1.8
-const MAX_ZOMBIES = 12
+const MAX_ZOMBIES = 8
+const ZOMBIE_SPAWN_MIN_DELAY = 75
+const ZOMBIE_SPAWN_RANDOM_DELAY = 55
+const TORCH_ATTACK_DURABILITY_COST_SEC = 2 * 60
+const FIRE_DURATION_SEC = 5
+const FIRE_DPS = 5
 // Vampires: boss-class enemies that appear at night
 const VAMPIRE_SPEED = 4.2
 const VAMPIRE_HEALTH = 180
@@ -1428,29 +1433,61 @@ export default function GameCanvas() {
 
     function buildHeldTorchGroup() {
       const g = new THREE.Group()
-      const wood = new THREE.MeshStandardMaterial({ color: 0x6b3b17, roughness: 0.9, metalness: 0 })
-      const char = new THREE.MeshStandardMaterial({ color: 0x1f1309, roughness: 1, metalness: 0 })
-      const flameOuter = new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 0.92 })
-      const flameInner = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.95 })
-      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.72, 10), wood)
-      handle.position.y = -0.2
-      handle.rotation.z = 0.12
+      const wood = new THREE.MeshStandardMaterial({ color: 0x7a431b, roughness: 0.86, metalness: 0 })
+      const woodDark = new THREE.MeshStandardMaterial({ color: 0x3b1f0d, roughness: 0.95, metalness: 0 })
+      const char = new THREE.MeshStandardMaterial({ color: 0x17100a, roughness: 1, metalness: 0, emissive: 0x1a0800, emissiveIntensity: 0.15 })
+      const ember = new THREE.MeshBasicMaterial({ color: 0xff5a18, transparent: true, opacity: 0.72 })
+      const flameOuter = new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 0.82, depthWrite: false })
+      const flameMid = new THREE.MeshBasicMaterial({ color: 0xffc247, transparent: true, opacity: 0.9, depthWrite: false })
+      const flameInner = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.96, depthWrite: false })
+
+      // Slightly tapered, faceted handle with carved lengthwise ridges.
+      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.052, 0.78, 12), wood)
+      handle.position.y = -0.22
+      handle.rotation.z = 0.1
       handle.castShadow = true
       g.add(handle)
-      const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.16, 10), char)
-      wrap.position.y = 0.18
-      wrap.castShadow = true
-      g.add(wrap)
+      for (let i = 0; i < 4; i++) {
+        const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.7, 0.012), woodDark)
+        const a = (i / 4) * Math.PI * 2
+        ridge.position.set(Math.cos(a) * 0.038, -0.22, Math.sin(a) * 0.038)
+        ridge.rotation.y = -a
+        ridge.rotation.z = 0.1
+        g.add(ridge)
+      }
+      // Leather/charred binding bands around the fuel head.
+      for (let i = 0; i < 3; i++) {
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.058, 0.035, 12), i === 1 ? char : woodDark)
+        band.position.y = 0.12 + i * 0.065
+        band.castShadow = true
+        g.add(band)
+      }
+      const emberCore = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), ember)
+      emberCore.position.y = 0.28
+      emberCore.scale.set(1.0, 0.45, 1.0)
+      g.add(emberCore)
+
       const fire = new THREE.Group()
-      fire.position.y = 0.36
-      const outer = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.34, 10), flameOuter)
+      fire.position.y = 0.39
+      const outer = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.38, 12), flameOuter)
       outer.position.y = 0.08
+      outer.rotation.z = -0.08
       fire.add(outer)
-      const inner = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.22, 10), flameInner)
-      inner.position.y = 0.06
+      const mid = new THREE.Mesh(new THREE.ConeGeometry(0.105, 0.3, 12), flameMid)
+      mid.position.set(0.018, 0.075, 0.01)
+      mid.rotation.z = 0.1
+      fire.add(mid)
+      const inner = new THREE.Mesh(new THREE.ConeGeometry(0.062, 0.21, 10), flameInner)
+      inner.position.set(-0.015, 0.055, 0.015)
       fire.add(inner)
-      const glow = new THREE.PointLight(0xff8a28, 0.8, 4, 2)
-      glow.position.y = 0.22
+      for (let i = 0; i < 5; i++) {
+        const spark = new THREE.Mesh(new THREE.SphereGeometry(0.012 + (i % 2) * 0.006, 6, 4), flameInner)
+        spark.position.set((Math.random() - 0.5) * 0.16, 0.18 + Math.random() * 0.18, (Math.random() - 0.5) * 0.12)
+        ;(spark as any).__baseY = spark.position.y
+        fire.add(spark)
+      }
+      const glow = new THREE.PointLight(0xff8a28, 1.05, 5.2, 2)
+      glow.position.y = 0.18
       fire.add(glow)
       ;(g as any).__flame = fire
       ;(g as any).__glow = glow
@@ -1700,6 +1737,11 @@ export default function GameCanvas() {
     const brokenResources = new Set<string>()
     const removedDropIds = new Set<string>()
     let pvpDeathDropped = false
+    let playerBurnUntil = 0
+    let playerBurnTick = 0
+    const burningTargets = new Map<string, { mesh: THREE.Object3D; effect: THREE.Group; until: number; tick: number; kind: 'zombie' | 'vampire' | 'goblin' | 'worm' | 'orc'; entity: any }>()
+    const burnFlameMat = new THREE.MeshBasicMaterial({ color: 0xff6a12, transparent: true, opacity: 0.72, depthWrite: false })
+    const burnCoreMat = new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true, opacity: 0.85, depthWrite: false })
 
     function makeNetId(prefix: string) {
       return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -1707,6 +1749,88 @@ export default function GameCanvas() {
 
     function resourceKey(kind: 'tree' | 'stone' | 'cactus', x: number, z: number) {
       return `${kind}:${x.toFixed(2)}:${z.toFixed(2)}`
+    }
+
+    function makeBurnEffect(height = 1.4, radius = 0.22) {
+      const g = new THREE.Group()
+      g.position.y = Math.max(0.5, height * 0.45)
+      for (let i = 0; i < 4; i++) {
+        const flame = new THREE.Mesh(new THREE.ConeGeometry(radius * (0.7 + i * 0.12), height * 0.34, 8), i % 2 ? burnCoreMat : burnFlameMat)
+        flame.position.set((Math.random() - 0.5) * radius, i * height * 0.1, (Math.random() - 0.5) * radius)
+        flame.rotation.z = (Math.random() - 0.5) * 0.45
+        ;(flame as any).__phase = Math.random() * Math.PI * 2
+        g.add(flame)
+      }
+      const light = new THREE.PointLight(0xff6a13, 0.9, Math.max(3, height * 3), 2)
+      light.position.y = height * 0.25
+      ;(g as any).__light = light
+      g.add(light)
+      return g
+    }
+
+    function igniteEntity(kind: 'zombie' | 'vampire' | 'goblin' | 'worm' | 'orc', entity: any, height = 1.4, radius = 0.22) {
+      const key = `${kind}:${entity.id}`
+      const now = performance.now()
+      const existing = burningTargets.get(key)
+      if (existing) {
+        existing.until = now + FIRE_DURATION_SEC * 1000
+        existing.tick = 0
+        return
+      }
+      const effect = makeBurnEffect(height, radius)
+      entity.mesh.add(effect)
+      burningTargets.set(key, { mesh: entity.mesh, effect, until: now + FIRE_DURATION_SEC * 1000, tick: 0, kind, entity })
+    }
+
+    function clearBurnFor(kind: 'zombie' | 'vampire' | 'goblin' | 'worm' | 'orc', entity: any) {
+      const key = `${kind}:${entity.id}`
+      const burn = burningTargets.get(key)
+      if (!burn) return
+      burn.mesh.remove(burn.effect)
+      burningTargets.delete(key)
+    }
+
+    function updateBurningTargets(dt: number) {
+      const now = performance.now()
+      for (const [key, burn] of Array.from(burningTargets.entries())) {
+        if (!burn.entity || burn.entity.hp <= 0 || now >= burn.until) {
+          burn.mesh.remove(burn.effect)
+          burningTargets.delete(key)
+          continue
+        }
+        burn.tick += dt
+        const t = now * 0.012
+        burn.effect.children.forEach((child: any, i) => {
+          if (child.isMesh) {
+            const p = child.__phase || 0
+            child.scale.setScalar(0.78 + Math.sin(t + p) * 0.18 + i * 0.04)
+            child.rotation.y += dt * (1.5 + i * 0.2)
+          }
+        })
+        const light = (burn.effect as any).__light as THREE.PointLight | undefined
+        if (light) light.intensity = 0.65 + Math.sin(t * 1.7) * 0.22
+        while (burn.tick >= 1) {
+          burn.tick -= 1
+          if (burn.kind === 'orc') damageOrc(burn.entity as OrcBoss, FIRE_DPS)
+          else {
+            burn.entity.hp -= FIRE_DPS
+            burn.entity.hurtTimer = 0.2
+            if (burn.kind === 'worm' && burn.entity.hp <= 0 && burn.entity.state !== 'dying') {
+              burn.entity.state = 'dying'
+              burn.entity.stateTimer = 1.8
+              burn.entity.vel.set(0, 0, 0)
+              burn.entity.warning.visible = false
+              useGame.getState().showToast('🔥 The Worm burns out!')
+            }
+          }
+        }
+      }
+    }
+
+    function igniteLocalPlayer() {
+      playerBurnUntil = performance.now() + FIRE_DURATION_SEC * 1000
+      playerBurnTick = 0
+      useGame.getState().showToast('🔥 You are on fire!')
     }
 
     function queueWorldEvent(type: string, payload: any) {
@@ -1897,6 +2021,7 @@ export default function GameCanvas() {
     }
 
     function removeZombie(z: Zombie) {
+      clearBurnFor('zombie', z)
       scene.remove(z.mesh)
       z.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
     }
@@ -2023,6 +2148,7 @@ export default function GameCanvas() {
     }
 
     function removeGoblin(g: Goblin) {
+      clearBurnFor('goblin', g)
       scene.remove(g.mesh)
       g.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
     }
@@ -2194,6 +2320,7 @@ export default function GameCanvas() {
     }
 
     function removeVampire(v: Vampire) {
+      clearBurnFor('vampire', v)
       scene.remove(v.mesh)
       if (v.bat) scene.remove(v.bat)
       v.mesh.traverse((obj: any) => {
@@ -2351,6 +2478,7 @@ export default function GameCanvas() {
     }
 
     function removeWorm(w: WormBoss) {
+      clearBurnFor('worm', w)
       scene.remove(w.mesh)
       scene.remove(w.warning)
       w.warning.geometry.dispose()
@@ -2559,6 +2687,7 @@ export default function GameCanvas() {
     }
 
     function removeOrc(o: OrcBoss) {
+      clearBurnFor('orc', o)
       scene.remove(o.mesh)
       o.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
     }
@@ -3839,7 +3968,7 @@ export default function GameCanvas() {
     // multiplayer server sends an authoritative time correction.
     let timeCycleOriginMs = Date.now() - timeOfDayToCycleSeconds(timeOfDayAcc) * 1000
     let wasNight = isNightTimeValue(timeOfDayAcc)
-    let zombieSpawnTimer = 3
+    let zombieSpawnTimer = ZOMBIE_SPAWN_MIN_DELAY
     let vampireSpawnTimer = 30
     // ORC is a rare daytime cave guardian, tethered to its cave entrance.
     let orcSpawnTimer = 140 + Math.random() * 90
@@ -3865,6 +3994,7 @@ export default function GameCanvas() {
       targetYaw: number
       // used to detect stalled heartbeat -> fade the ghost out
       lastSeen: number
+      dead: boolean
     }
     const ghosts = new Map<string, Ghost>()
     const ghostSkinMat = new THREE.MeshStandardMaterial({ color: 0xd6b08d, roughness: 0.7, metalness: 0 })
@@ -3956,6 +4086,7 @@ export default function GameCanvas() {
         yaw,
         targetYaw: yaw,
         lastSeen: performance.now(),
+        dead: y < -9000,
       }
       ghosts.set(id, ghost)
       return ghost
@@ -3989,13 +4120,16 @@ export default function GameCanvas() {
       for (const p of players) {
         if (!p || !p.id) continue
         seen.add(p.id)
+        const isDeadGhost = Number(p.posY) < -9000
         let g = ghosts.get(p.id)
         if (!g) {
           g = createGhost(p.id, p.name || 'Survivor', p.posX, p.posY, p.posZ, p.yaw)
-        } else {
+        } else if (!isDeadGhost) {
           g.target.set(p.posX, p.posY, p.posZ)
           g.targetYaw = p.yaw
         }
+        g.dead = isDeadGhost
+        g.mesh.visible = !isDeadGhost
         g.lastSeen = now
       }
       // Drop anyone missing from the latest update if they've been silent
@@ -4010,12 +4144,17 @@ export default function GameCanvas() {
     }
 
     // Exposed so the presence heartbeat can read current player pose.
-    ;(window as any).__nightfallGetPos = () => ({
-      x: playerPos.x,
-      y: playerPos.y,
-      z: playerPos.z,
-      yaw: playerYaw,
-    })
+    ;(window as any).__nightfallGetPos = () => {
+      const dead = useGame.getState().mode === 'dead'
+      return {
+        x: playerPos.x,
+        // Sentinel value keeps dead players out of other clients' ghost view
+        // without requiring a database migration for presence state.
+        y: dead ? -9999 : playerPos.y,
+        z: playerPos.z,
+        yaw: playerYaw,
+      }
+    }
 
     function enemySnapshot(): EnemySnapshot[] {
       return [
@@ -4132,7 +4271,8 @@ export default function GameCanvas() {
             playerVel.x += kx * 2.5
             playerVel.z += kz * 2.5
             state.takeDamage(Math.max(1, Number(p.damage || 1)))
-            state.showToast(`⚔️ Hit by ${String(p.attackerName || 'another player')}!`)
+            if (p.fire) igniteLocalPlayer()
+            state.showToast(p.fire ? `🔥 Ignited by ${String(p.attackerName || 'another player')}!` : `⚔️ Hit by ${String(p.attackerName || 'another player')}!`)
             if (before > 0 && useGame.getState().health <= 0) {
               dropAllPlayerItems(`Slain by ${String(p.attackerName || 'another player')}.`)
               queueWorldEvent('pvp_death', { victimId: targetId, killerId: String(p.attackerId || ''), x: playerPos.x, y: heightAt(playerPos.x, playerPos.z), z: playerPos.z })
@@ -4211,6 +4351,34 @@ export default function GameCanvas() {
         playerMesh.visible = false
         weaponGroup.visible = false
         fistGroup.visible = false
+        offhandTorchGroup.visible = false
+      }
+
+      // Lit torches have a shared 15-minute burn timer. Main-hand or offhand
+      // use both consume that timer; fresh crafted/equipped torches reset it.
+      const torchLit = state.mode !== 'dead' && (state.offhandItem === 'torch' || state.equippedItem === 'torch')
+      if (!paused && torchLit) {
+        const expired = state.damageTorchDurability(dt)
+        if (expired) {
+          if (useGame.getState().offhandItem === 'torch') state.setOffhand(null)
+          if (useGame.getState().equippedItem === 'torch') state.removeItem('torch', 1)
+          state.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
+          state.showToast('🕯️ Your torch burned out.')
+        }
+      }
+
+      // Fire damage on the local player from PvP torch hits.
+      if (!paused && state.mode !== 'dead' && playerBurnUntil > performance.now()) {
+        playerBurnTick += dt
+        while (playerBurnTick >= 1) {
+          playerBurnTick -= 1
+          const before = useGame.getState().health
+          state.takeDamage(FIRE_DPS)
+          if (before > 0 && useGame.getState().health <= 0) {
+            dropAllPlayerItems('Burned to death.')
+            break
+          }
+        }
       }
 
       // Time of day progression — based on real elapsed wall-clock time, not
@@ -4315,11 +4483,13 @@ export default function GameCanvas() {
 
       // Player/offhand light. A crafted torch in the offhand provides the real
       // close-range light while leaving the main hand free to attack.
-      const hasOffhandTorch = useGame.getState().offhandItem === 'torch'
-      if (hasOffhandTorch || isNightNow) {
+      const lightState = useGame.getState()
+      const hasOffhandTorch = lightState.mode !== 'dead' && lightState.offhandItem === 'torch'
+      const hasMainTorch = lightState.mode !== 'dead' && lightState.equippedItem === 'torch'
+      if (lightState.mode !== 'dead' && (hasOffhandTorch || hasMainTorch || isNightNow)) {
         const flicker = Math.sin(performance.now() * 0.012) * 0.18 + Math.sin(performance.now() * 0.031) * 0.08
-        playerTorch.intensity = hasOffhandTorch ? 2.15 + flicker : 0.45
-        playerTorch.distance = hasOffhandTorch ? 20 : 9
+        playerTorch.intensity = (hasOffhandTorch || hasMainTorch) ? 2.15 + flicker : 0.45
+        playerTorch.distance = (hasOffhandTorch || hasMainTorch) ? 20 : 9
         playerTorch.position.set(playerPos.x, playerPos.y + 0.25, playerPos.z)
       } else {
         playerTorch.intensity = 0
@@ -4763,11 +4933,14 @@ export default function GameCanvas() {
         // Build preview
         updateBuildGhost(state)
 
+        // Ongoing torch-fire DoT/effects.
+        updateBurningTargets(dt)
+
         // Zombies update
         if (isNightNow && isWorldAuthority) {
           zombieSpawnTimer -= dt
           if (zombieSpawnTimer <= 0) {
-            zombieSpawnTimer = 3 + Math.random() * 4
+            zombieSpawnTimer = ZOMBIE_SPAWN_MIN_DELAY + Math.random() * ZOMBIE_SPAWN_RANDOM_DELAY
             spawnZombie()
           }
         }
@@ -5673,6 +5846,11 @@ export default function GameCanvas() {
         const easePos = 1 - Math.pow(0.001, dt) // ~3.3/sec
         const easeYaw = 1 - Math.pow(0.004, dt)
         for (const g of ghosts.values()) {
+          if (g.dead) {
+            g.mesh.visible = false
+            continue
+          }
+          g.mesh.visible = true
           g.pos.x += (g.target.x - g.pos.x) * easePos
           g.pos.y += (g.target.y - g.pos.y) * easePos
           g.pos.z += (g.target.z - g.pos.z) * easePos
@@ -5702,8 +5880,27 @@ export default function GameCanvas() {
       raycaster.far = REACH
       // Determine damage
       const eq = useGame.getState().equippedItem
+      const isTorchAttack = eq === 'torch'
       let dmg = FIST_DAMAGE
       if (eq && ITEMS[eq]?.damage) dmg = ITEMS[eq]!.damage!
+
+      if (isTorchAttack && useGame.getState().torchDurability <= 0) {
+        useGame.getState().showToast('🕯️ That torch is burned out')
+        return
+      }
+
+      const spendTorchHit = () => {
+        if (!isTorchAttack) return true
+        const s = useGame.getState()
+        const expired = s.damageTorchDurability(TORCH_ATTACK_DURABILITY_COST_SEC)
+        if (expired) {
+          s.removeItem('torch', 1)
+          if (s.offhandItem === 'torch') s.setOffhand(null)
+          s.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
+          s.showToast('🔥 Final torch strike! It burns out.')
+        }
+        return true
+      }
 
       // If the player is holding a cosmetic / placeable / resource (anything
       // that has no damage stat and isn't the holy water consumable), block
@@ -5719,12 +5916,14 @@ export default function GameCanvas() {
       if (eq !== 'holy_water') {
         let bestGhost: { id: string; name: string; distance: number } | null = null
         for (const [id, g] of ghosts) {
+          if (g.dead || !g.mesh.visible) continue
           const hits = raycaster.intersectObject(g.mesh, true)
           if (hits.length && hits[0].distance < REACH) {
             if (!bestGhost || hits[0].distance < bestGhost.distance) bestGhost = { id, name: (g as any).name || 'Survivor', distance: hits[0].distance }
           }
         }
         if (bestGhost) {
+          spendTorchHit()
           const attackerId = ownMemberKey() || worldClientId
           let attackerName = 'Survivor'
           try { attackerName = window.localStorage.getItem('nightfall:guestName') || attackerName } catch {}
@@ -5734,6 +5933,7 @@ export default function GameCanvas() {
             attackerId,
             attackerName,
             damage: dmg,
+            fire: isTorchAttack,
             knockX: attackDir.x * knock,
             knockZ: attackDir.z * knock,
           })
@@ -5793,6 +5993,8 @@ export default function GameCanvas() {
       // once emerged, swords/axes deal weapon-specific boss damage.
       const wormHit = findWormHit(raycaster)
       if (wormHit) {
+        spendTorchHit()
+        if (isTorchAttack) igniteEntity('worm', wormHit.worm, 1.1, 0.35)
         damageWorm(wormHit.worm, eq as ItemId | null, dmg)
         return
       }
@@ -5810,7 +6012,9 @@ export default function GameCanvas() {
         const hitMesh = zombieHits[0].object
         const z = zombies.find(zz => zz.mesh === hitMesh)
         if (z) {
+          spendTorchHit()
           z.hp -= dmg
+          if (isTorchAttack) igniteEntity('zombie', z, 1.55, 0.28)
           z.hurtTimer = 0.2
           if (z.hp <= 0) {
             const px = z.pos.x, py = z.pos.y, pz = z.pos.z
@@ -5848,7 +6052,9 @@ export default function GameCanvas() {
         const hitMesh = vampHits[0].object
         const v = vampires.find(vv => vv.mesh === hitMesh)
         if (v) {
+          spendTorchHit()
           v.hp -= dmg
+          if (isTorchAttack) igniteEntity('vampire', v, 2.0, 0.34)
           v.hurtTimer = 0.2
           if (v.hp <= 0) {
             const px = v.pos.x, py = v.pos.y, pz = v.pos.z
@@ -5894,7 +6100,9 @@ export default function GameCanvas() {
       }
       orcHits.sort((a, b) => a.hit.distance - b.hit.distance)
       if (orcHits.length > 0) {
+        spendTorchHit()
         const target = orcHits[0]
+        if (isTorchAttack) igniteEntity('orc', target.orc, 3.1, 0.58)
         damageOrc(target.orc, dmg, target.weak)
         return
       }
@@ -5905,7 +6113,9 @@ export default function GameCanvas() {
       if (gobHit) {
         const gb = gobHit.goblin
         if (gb) {
+          spendTorchHit()
           gb.hp -= dmg
+          if (isTorchAttack) igniteEntity('goblin', gb, 1.1, 0.2)
           gb.hurtTimer = 0.2
           if (gb.hp <= 0) {
             const dropped = dropGoblinBackpack(gb)
@@ -6292,6 +6502,7 @@ export default function GameCanvas() {
         health: s.health, level: s.level, xp: s.xp,
         posX: playerPos.x, posY: playerPos.y, posZ: playerPos.z,
         timeOfDay: s.timeOfDay, equippedItem: s.equippedItem, offhandItem: s.offhandItem,
+        torchDurability: s.torchDurability,
         inventory: s.inventory, structures: s.structures,
         deaths: s.deaths, zombiesKilled: s.zombiesKilled,
       }
@@ -6307,6 +6518,8 @@ export default function GameCanvas() {
       playerVel.set(0, 0, 0)
       walkTarget = null
       attackTimer = 0
+      state.setOffhand('torch')
+      state.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
       updateChunks(playerPos.x, playerPos.z)
       pvpDeathDropped = false
       return !!bed

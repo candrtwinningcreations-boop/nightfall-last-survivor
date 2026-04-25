@@ -42,8 +42,11 @@ export default function InventoryPanel() {
   const credits = useGame(s => s.credits)
   const cosmetics = useGame(s => s.cosmetics)
   const offhandItem = useGame(s => s.offhandItem)
+  const torchDurability = useGame(s => s.torchDurability)
+  const torchMaxDurability = useGame(s => s.torchMaxDurability)
   const equipCosmetic = useGame(s => s.equipCosmetic)
   const setOffhand = useGame(s => s.setOffhand)
+  const setTorchDurability = useGame(s => s.setTorchDurability)
   const removeItem = useGame(s => s.removeItem)
   const addItem = useGame(s => s.addItem)
   const showToast = useGame(s => s.showToast)
@@ -53,6 +56,8 @@ export default function InventoryPanel() {
 
   const xpNeeded = xpForNextLevel(level)
   const xpPct = Math.min(100, (xp / xpNeeded) * 100)
+  const torchPct = torchMaxDurability > 0 ? Math.max(0, Math.min(100, (torchDurability / torchMaxDurability) * 100)) : 0
+  const torchTime = `${Math.floor(Math.max(0, torchDurability) / 60)}:${Math.round(Math.max(0, torchDurability) % 60).toString().padStart(2, '0')}`
 
   const handleDragStart = (i: number) => setDragFrom(i)
   const handleDrop = (i: number) => {
@@ -110,6 +115,7 @@ export default function InventoryPanel() {
     if (!removeItem(id, 1)) return
     if (offhandItem) addItem(offhandItem, 1)
     setOffhand(id)
+    setTorchDurability(torchMaxDurability)
     showToast(`🔥 Equipped ${def.name} in offhand`)
   }
 
@@ -198,7 +204,7 @@ export default function InventoryPanel() {
                           isActive ? 'border-amber-400 ring-2 ring-amber-400/40' : ''
                         } ${isHotbar ? 'bg-zinc-800/70 border border-amber-500/20' : 'bg-zinc-900/60 border border-white/10'} hover:bg-zinc-800`}
                         style={def?.rarity ? { boxShadow: `0 0 0 2px ${RARITY_COLOR[def.rarity]} inset` } : undefined}
-                        title={describeItem(def ?? null, def?.offhand === 'torch' ? '(double-click to equip offhand)' : def?.cosmeticSlot ? '(double-click to wear)' : '')}
+                        title={describeItem(def ?? null, def?.offhand === 'torch' ? `Durability: ${torchTime} remaining\n(double-click to equip offhand, or place on hotbar for main hand)` : def?.cosmeticSlot ? '(double-click to wear)' : '')}
                       >
                         {def && slot.id && (
                           <>
@@ -210,7 +216,13 @@ export default function InventoryPanel() {
                               <span className="absolute top-0.5 right-1 text-[8px] font-bold text-pink-300">♥</span>
                             )}
                             {def.offhand === 'torch' && (
-                              <span className="absolute top-0.5 right-1 text-[9px] font-bold text-orange-300">OFF</span>
+                              <>
+                                <span className="absolute top-0.5 right-1 text-[9px] font-bold text-orange-300">TORCH</span>
+                                <span className="absolute bottom-1 left-1 text-[9px] font-mono text-orange-100 drop-shadow">{torchTime}</span>
+                                <div className="absolute bottom-0.5 left-1 right-1 h-1 bg-black/60 rounded-full overflow-hidden">
+                                  <div className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-lime-400" style={{ width: `${torchPct}%` }} />
+                                </div>
+                              </>
                             )}
                           </>
                         )}
@@ -268,14 +280,19 @@ export default function InventoryPanel() {
                   <button
                     onClick={unequipOffhand}
                     disabled={!offhandItem}
-                    className="w-full h-16 rounded-md bg-zinc-900/70 border border-white/10 hover:bg-zinc-800 disabled:hover:bg-zinc-900/70 disabled:opacity-70 flex items-center justify-center gap-3 text-left"
-                    title={offhandItem ? `${ITEMS[offhandItem].name}\n— click to unequip` : 'Empty offhand\nDouble-click a Torch in your inventory to equip it here.'}
+                    className="relative w-full h-16 rounded-md bg-zinc-900/70 border border-white/10 hover:bg-zinc-800 disabled:hover:bg-zinc-900/70 disabled:opacity-70 flex items-center justify-center gap-3 text-left overflow-hidden"
+                    title={offhandItem ? `${ITEMS[offhandItem].name}\nDurability: ${torchTime} remaining\n— click to unequip` : 'Empty offhand\nDouble-click a Torch in your inventory to equip it here.'}
                   >
                     {offhandItem ? <ItemIcon id={offhandItem} size={42} /> : <Flame className="w-6 h-6 text-zinc-700" />}
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-white">{offhandItem ? ITEMS[offhandItem].name : 'Empty'}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono">Main hand remains free</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{offhandItem === 'torch' ? `Durability ${torchTime}` : 'Main hand remains free'}</div>
                     </div>
+                    {offhandItem === 'torch' && (
+                      <div className="absolute bottom-1 left-3 right-3 h-1 bg-black/60 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-lime-400" style={{ width: `${torchPct}%` }} />
+                      </div>
+                    )}
                   </button>
                 </div>
               </div>

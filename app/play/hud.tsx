@@ -15,6 +15,8 @@ export default function Hud() {
   const hotbarIndex = useGame(s => s.hotbarIndex)
   const equippedItem = useGame(s => s.equippedItem)
   const offhandItem = useGame(s => s.offhandItem)
+  const torchDurability = useGame(s => s.torchDurability)
+  const torchMaxDurability = useGame(s => s.torchMaxDurability)
   const damageFlash = useGame(s => s.damageFlash)
   const toast = useGame(s => s.toast)
 
@@ -54,6 +56,8 @@ export default function Hud() {
     const r = s % 60
     return `${m}:${r.toString().padStart(2, '0')}`
   }
+  const torchPct = torchMaxDurability > 0 ? Math.max(0, Math.min(100, (torchDurability / torchMaxDurability) * 100)) : 0
+  const torchTime = fmtCountdown(torchDurability)
 
   // Health-based vignette: strong when low health
   const lowHealth = health / 100
@@ -250,6 +254,14 @@ export default function Hud() {
                 {def && slot.id && (
                   <>
                     <ItemIcon id={slot.id} size={40} />
+                    {slot.id === 'torch' && (
+                      <>
+                        <span className="absolute bottom-0.5 left-1 font-mono text-[9px] text-orange-100 drop-shadow">{torchTime}</span>
+                        <div className="absolute bottom-0 left-1 right-1 h-1 bg-black/60 rounded-full overflow-hidden">
+                          <div className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-lime-400" style={{ width: `${torchPct}%` }} />
+                        </div>
+                      </>
+                    )}
                     {slot.count > 1 && (
                       <span className="absolute bottom-0 right-1 font-mono text-[11px] text-white drop-shadow">
                         {slot.count}
@@ -266,12 +278,13 @@ export default function Hud() {
 
       {/* Bottom-right: Equipped */}
       <div className="absolute bottom-4 right-4 pointer-events-auto flex items-end gap-2">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 backdrop-blur-sm border border-orange-500/20 text-white">
+        <div className="relative flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 backdrop-blur-sm border border-orange-500/20 text-white overflow-hidden">
           {offhandItem ? <ItemIcon id={offhandItem} size={30} /> : <Flame className="w-4 h-4 text-zinc-500" />}
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-widest text-zinc-500">Offhand</span>
-            <span className="text-xs font-semibold leading-none">{offhandItem ? ITEMS[offhandItem]?.name : 'Empty'}</span>
+            <span className="text-xs font-semibold leading-none">{offhandItem ? `${ITEMS[offhandItem]?.name} · ${torchTime}` : 'Empty'}</span>
           </div>
+          {offhandItem === 'torch' && <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-red-500 via-amber-400 to-lime-400" style={{ width: `${torchPct}%` }} />}
         </div>
         <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-black/60 backdrop-blur-sm border border-white/10 text-white">
           {equippedItem ? (
@@ -280,7 +293,7 @@ export default function Hud() {
               <div className="flex flex-col">
                 <span className="text-sm font-semibold leading-none">{ITEMS[equippedItem]?.name}</span>
                 <span className="text-[10px] uppercase tracking-widest text-zinc-400">
-                  {ITEMS[equippedItem]?.damage ? `${ITEMS[equippedItem]?.damage} damage` : 'utility item'}
+                  {equippedItem === 'torch' ? `${ITEMS[equippedItem]?.damage} damage · ${torchTime}` : ITEMS[equippedItem]?.damage ? `${ITEMS[equippedItem]?.damage} damage` : 'utility item'}
                 </span>
               </div>
             </>

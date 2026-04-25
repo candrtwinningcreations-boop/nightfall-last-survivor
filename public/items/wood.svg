@@ -1,0 +1,51 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Svg-linear_gradient.svg/3840px-Svg-linear_gradient.svg.png">
+  <defs>
+    <linearGradient id="plankA" x1="18" y1="18" x2="100" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8793A"/>
+      <stop offset="0.45" stop-color="#8B4E24"/>
+      <stop offset="1" stop-color="#5F3319"/>
+    </linearGradient>
+    <linearGradient id="plankB" x1="28" y1="12" x2="108" y2="100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D49A59"/>
+      <stop offset="0.5" stop-color="#9C5C2B"/>
+      <stop offset="1" stop-color="#6A391B"/>
+    </linearGradient>
+    <radialGradient id="ring" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(46 49) rotate(38) scale(19 12)">
+      <stop stop-color="#F3C77E"/>
+      <stop offset="0.42" stop-color="#B86F32"/>
+      <stop offset="1" stop-color="#6E3A1B"/>
+    </radialGradient>
+    <filter id="shadow" x="0" y="0" width="128" height="128" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#120906" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="128" height="128" rx="24" fill="#1F130B"/>
+  <circle cx="66" cy="64" r="48" fill="#3C2414" opacity="0.45"/>
+
+  <g filter="url(#shadow)">
+    <path d="M24 38C24 31.925 28.925 27 35 27H83C89.075 27 94 31.925 94 38V49H24V38Z" fill="url(#plankB)"/>
+    <path d="M24 49H94V67H24V49Z" fill="url(#plankA)"/>
+    <path d="M24 67H94V87C94 93.075 89.075 98 83 98H35C28.925 98 24 93.075 24 87V67Z" fill="url(#plankB)"/>
+
+    <path d="M25.5 49H92.5" stroke="#4B2612" stroke-width="4" stroke-linecap="round"/>
+    <path d="M25.5 67H92.5" stroke="#4B2612" stroke-width="4" stroke-linecap="round"/>
+
+    <path d="M33 39C45 34 61 35 83 39" stroke="#E7B46B" stroke-width="3" stroke-linecap="round" opacity="0.52"/>
+    <path d="M33 58C48 52 64 55 86 56" stroke="#E0A35C" stroke-width="2.5" stroke-linecap="round" opacity="0.42"/>
+    <path d="M34 79C51 72 68 76 86 80" stroke="#E7B46B" stroke-width="3" stroke-linecap="round" opacity="0.42"/>
+    <path d="M37 90C49 86 65 88 81 91" stroke="#3A1C0C" stroke-width="2.5" stroke-linecap="round" opacity="0.42"/>
+
+    <ellipse cx="47" cy="49" rx="15" ry="9" transform="rotate(7 47 49)" fill="url(#ring)" opacity="0.9"/>
+    <ellipse cx="47" cy="49" rx="8" ry="4.5" transform="rotate(7 47 49)" stroke="#512612" stroke-width="2" opacity="0.9"/>
+    <ellipse cx="76" cy="77" rx="12" ry="7" transform="rotate(-11 76 77)" fill="#7A3D1B" opacity="0.62"/>
+    <ellipse cx="76" cy="77" rx="6" ry="3.4" transform="rotate(-11 76 77)" stroke="#3F1E0D" stroke-width="1.8" opacity="0.72"/>
+
+    <path d="M23 38C23 31.373 28.373 26 35 26H83C89.627 26 95 31.373 95 38V87C95 93.627 89.627 99 83 99H35C28.373 99 23 93.627 23 87V38Z" stroke="#F1C27D" stroke-width="2" opacity="0.22"/>
+    <path d="M96 42L109 49L96 57V42Z" fill="#6E391A"/>
+    <path d="M96 70L111 78L96 86V70Z" fill="#5A2E16"/>
+    <path d="M22 45L12 52L22 60V45Z" fill="#6C3719"/>
+  </g>
+
+  <path d="M38 29C53 25 73 25 87 31" stroke="#FFD596" stroke-width="2" stroke-linecap="round" opacity="0.24"/>
+</svg>

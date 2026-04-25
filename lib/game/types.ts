@@ -126,6 +126,7 @@ export interface SaveData {
   timeOfDay: number
   equippedItem: string | null
   offhandItem?: string | null
+  torchDurability?: number
   inventoryJson: string
   structuresJson: string
   deaths: number

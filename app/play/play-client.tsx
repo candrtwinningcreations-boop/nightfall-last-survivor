@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { useGame } from '@/lib/game/store'
+import { TORCH_MAX_DURABILITY_SEC, useGame } from '@/lib/game/store'
 import Hud from './hud'
 import InventoryPanel from './inventory-panel'
 import CraftingPanel from './crafting-panel'
@@ -130,9 +130,22 @@ export default function PlayClient() {
         setLevel(data.level, data.xp)
         setTime(data.timeOfDay)
         const savedOffhand = data.offhandItem === 'torch' ? 'torch' : (() => {
-          try { return localStorage.getItem(`nightfall:offhand:${sid || 'default'}`) === 'torch' ? 'torch' : null } catch { return null }
+          try {
+            const raw = localStorage.getItem(`nightfall:offhand:${sid || 'default'}`)
+            // Legacy saves did not store offhand; give those survivors the new starter torch.
+            return raw === null ? 'torch' : raw === 'torch' ? 'torch' : null
+          } catch { return 'torch' }
         })()
         useGame.getState().setOffhand(savedOffhand)
+        const savedTorchDurability = (() => {
+          if (typeof data.torchDurability === 'number') return data.torchDurability
+          try {
+            const raw = localStorage.getItem(`nightfall:torchDurability:${sid || 'default'}`)
+            const n = raw ? Number(raw) : NaN
+            return Number.isFinite(n) && n > 0 ? n : TORCH_MAX_DURABILITY_SEC
+          } catch { return TORCH_MAX_DURABILITY_SEC }
+        })()
+        useGame.getState().setTorchDurability(savedTorchDurability)
         try {
           const inv = JSON.parse(data.inventoryJson || '[]')
           if (Array.isArray(inv) && inv.length > 0) {
@@ -261,10 +274,14 @@ export default function PlayClient() {
         const save = (window as any).__nightfallSave?.() ?? {
           health: state.health, level: state.level, xp: state.xp, posX: 0, posY: 2, posZ: 0,
           timeOfDay: state.timeOfDay, equippedItem: state.equippedItem, offhandItem: state.offhandItem,
+          torchDurability: state.torchDurability,
           inventory: state.inventory, structures: state.structures, deaths: state.deaths, zombiesKilled: state.zombiesKilled,
         }
         const sid = serverIdRef.current
-        try { localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, state.offhandItem || '') } catch {}
+        try {
+          localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, state.offhandItem || '')
+          localStorage.setItem(`nightfall:torchDurability:${sid || 'default'}`, String(state.torchDurability))
+        } catch {}
         const saveBody = { ...save, serverId: sid || undefined, guestId: guestIdRef.current || undefined, guestName: guestNameRef.current || undefined }
         navigator.sendBeacon?.('/api/save', new Blob([JSON.stringify(saveBody)], { type: 'application/json' }))
         if (sid) {
@@ -288,7 +305,10 @@ export default function PlayClient() {
     const save = (window as any).__nightfallSave?.()
     if (!save) return
     const sid = serverIdRef.current
-    try { localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, save.offhandItem || '') } catch {}
+    try {
+      localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, save.offhandItem || '')
+      localStorage.setItem(`nightfall:torchDurability:${sid || 'default'}`, String(save.torchDurability ?? TORCH_MAX_DURABILITY_SEC))
+    } catch {}
     const body = {
       ...save,
       serverId: sid || undefined,

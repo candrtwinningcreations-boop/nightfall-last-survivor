@@ -4,6 +4,8 @@ import { create } from 'zustand'
 import type { CosmeticSlot, EquippedCosmetic, InventorySlot, ItemId, StructureData } from './types'
 import { ITEMS, isBuildable, xpForNextLevel } from './items'
 
+export const TORCH_MAX_DURABILITY_SEC = 15 * 60
+
 export type GameMode = 'play' | 'inventory' | 'crafting' | 'build' | 'paused' | 'dead'
 // Which recipe set to show in the crafting panel. Opening via the C key
 // is a 'normal' context (wood/stone/basic gear). Right-clicking a placed
@@ -32,6 +34,8 @@ export interface GameState {
   hotbarIndex: number // 0..4 uses first 5 slots
   equippedItem: ItemId | null
   offhandItem: ItemId | null
+  torchDurability: number
+  torchMaxDurability: number
   mode: GameMode
   damageFlash: number // 0..1
   lastHitAt: number
@@ -74,6 +78,8 @@ export interface GameState {
   setHotbar: (i: number) => void
   setEquipped: (id: ItemId | null) => void
   setOffhand: (id: ItemId | null) => void
+  setTorchDurability: (seconds: number) => void
+  damageTorchDurability: (seconds: number) => boolean
   addStructure: (s: StructureData) => void
   removeStructure: (id: string) => void
   setStructures: (s: StructureData[]) => void
@@ -113,7 +119,10 @@ export const useGame = create<GameState>((set, get) => ({
   buildInventory: {},
   hotbarIndex: 0,
   equippedItem: null,
-  offhandItem: null,
+  // Fresh survivors start with a lit torch in the offhand so night is survivable.
+  offhandItem: 'torch',
+  torchDurability: TORCH_MAX_DURABILITY_SEC,
+  torchMaxDurability: TORCH_MAX_DURABILITY_SEC,
   mode: 'play',
   damageFlash: 0,
   lastHitAt: 0,
@@ -283,6 +292,15 @@ export const useGame = create<GameState>((set, get) => ({
   },
   setEquipped: (id) => set({ equippedItem: id }),
   setOffhand: (id) => set({ offhandItem: id }),
+  setTorchDurability: (seconds) => set((s) => ({
+    torchDurability: Math.max(0, Math.min(s.torchMaxDurability, seconds)),
+  })),
+  damageTorchDurability: (seconds) => {
+    const s = get()
+    const next = Math.max(0, s.torchDurability - Math.max(0, seconds))
+    set({ torchDurability: next })
+    return next <= 0
+  },
   addStructure: (s) => set((st) => ({ structures: [...st.structures, s] })),
   removeStructure: (id) => set((st) => ({ structures: st.structures.filter(s => s.id !== id) })),
   setStructures: (s) => set({ structures: s }),
@@ -320,7 +338,8 @@ export const useGame = create<GameState>((set, get) => ({
   showToast: (t) => set({ toast: { text: t, at: performance.now() } }),
   reset: () => set({
     health: 100, level: 1, xp: 0, timeOfDay: 0.25,
-    inventory: starterInv(), buildInventory: {}, hotbarIndex: 0, equippedItem: null, offhandItem: null, mode: 'play',
+    inventory: starterInv(), buildInventory: {}, hotbarIndex: 0, equippedItem: null,
+    offhandItem: 'torch', torchDurability: TORCH_MAX_DURABILITY_SEC, torchMaxDurability: TORCH_MAX_DURABILITY_SEC, mode: 'play',
     damageFlash: 0, zombiesKilled: 0, deaths: 0, structures: [], buildSelection: 'wall',
     toast: null, craftingContext: 'normal', cosmetics: {}, credits: 0, keysGuideVisible: true,
   }),
