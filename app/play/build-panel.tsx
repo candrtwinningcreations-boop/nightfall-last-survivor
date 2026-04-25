@@ -18,6 +18,7 @@ const BUILD_OPTIONS: { key: BuildKind; itemId: ItemId }[] = [
   { key: 'spike_trap', itemId: 'spike_trap' },
   { key: 'tree_stand', itemId: 'tree_stand' },
   { key: 'furnace',    itemId: 'furnace' },
+  { key: 'bed',        itemId: 'bed' },
 ]
 
 export default function BuildPanel() {

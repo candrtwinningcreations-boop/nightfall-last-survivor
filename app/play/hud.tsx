@@ -93,20 +93,20 @@ export default function Hud() {
           <div
             className={`flex items-center gap-2.5 px-4 py-2 rounded-lg bg-black/65 backdrop-blur-sm border text-sm font-mono tracking-wide shadow-lg ${
               phaseInfo.phase === 'day'
-                ? 'border-indigo-400/30 text-indigo-100'
-                : 'border-amber-400/30 text-amber-100'
+                ? 'border-amber-400/30 text-amber-100'
+                : 'border-indigo-400/30 text-indigo-100'
             }`}
           >
             {phaseInfo.phase === 'day' ? (
               <>
-                <Moon className="w-4 h-4 text-indigo-300" />
-                <span className="uppercase tracking-widest text-[11px] text-indigo-300/90">Nightfall in</span>
+                <Sun className="w-4 h-4 text-amber-300" />
+                <span className="uppercase tracking-widest text-[11px] text-amber-300/90">Day · night in</span>
                 <span className="text-base font-semibold text-white">{fmtCountdown(phaseInfo.secondsLeft)}</span>
               </>
             ) : (
               <>
-                <Sun className="w-4 h-4 text-amber-300" />
-                <span className="uppercase tracking-widest text-[11px] text-amber-300/90">Dawn in</span>
+                <Moon className="w-4 h-4 text-indigo-300" />
+                <span className="uppercase tracking-widest text-[11px] text-indigo-300/90">Night · dawn in</span>
                 <span className="text-base font-semibold text-white">{fmtCountdown(phaseInfo.secondsLeft)}</span>
               </>
             )}

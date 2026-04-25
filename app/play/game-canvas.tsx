@@ -33,7 +33,7 @@ const VAMPIRE_HEALTH = 180
 const VAMPIRE_DAMAGE = 18
 const VAMPIRE_ATTACK_RANGE = 2.2
 const MAX_VAMPIRES = 2
-// Goblins: pint-sized thieves that appear at any hour. They sprint in, snatch
+// Goblins: pint-sized night thieves. They sprint in, snatch
 // one random stack from the player's inventory, then bolt for the tree-line.
 // Slay them before they escape to recover your loot.
 const GOBLIN_SPEED = 5.2
@@ -51,12 +51,60 @@ const ORC_GRAB_DAMAGE = 30
 const ORC_GRAB_COOLDOWN = 30
 const MAX_ORCS = 1
 
+type Biome = 'forest' | 'plains' | 'desert'
+
+const DAY_START = 0.2
+const NIGHT_START = 0.8
+const DAY_SPAN = NIGHT_START - DAY_START
+const NIGHT_SPAN = 1 - DAY_SPAN
+const CYCLE_LENGTH_SEC = DAY_LENGTH_SEC + NIGHT_LENGTH_SEC
+
+function isNightTimeValue(t: number) {
+  return t < DAY_START || t > NIGHT_START
+}
+
+function timeOfDayToCycleSeconds(t: number) {
+  const wrapped = ((t % 1) + 1) % 1
+  if (wrapped >= DAY_START && wrapped <= NIGHT_START) {
+    return ((wrapped - DAY_START) / DAY_SPAN) * DAY_LENGTH_SEC
+  }
+  const nightProgress = wrapped > NIGHT_START ? wrapped - NIGHT_START : wrapped + (1 - NIGHT_START)
+  return DAY_LENGTH_SEC + (nightProgress / NIGHT_SPAN) * NIGHT_LENGTH_SEC
+}
+
+function cycleSecondsToTimeOfDay(seconds: number) {
+  const age = ((seconds % CYCLE_LENGTH_SEC) + CYCLE_LENGTH_SEC) % CYCLE_LENGTH_SEC
+  if (age < DAY_LENGTH_SEC) return DAY_START + (age / DAY_LENGTH_SEC) * DAY_SPAN
+  return (NIGHT_START + ((age - DAY_LENGTH_SEC) / NIGHT_LENGTH_SEC) * NIGHT_SPAN) % 1
+}
+
+function phaseInfoForTimeOfDay(t: number) {
+  const age = timeOfDayToCycleSeconds(t)
+  if (age < DAY_LENGTH_SEC) return { phase: 'day' as const, secondsLeft: DAY_LENGTH_SEC - age }
+  return { phase: 'night' as const, secondsLeft: CYCLE_LENGTH_SEC - age }
+}
+
+function biomeAt(x: number, z: number): Biome {
+  // Low-frequency deterministic noise creates broad, contiguous biome regions.
+  // The origin is intentionally biased toward forest/plains so new players do
+  // not start resource-starved inside a desert.
+  const v =
+    Math.sin(x * 0.008 + z * 0.003) * 0.55 +
+    Math.cos(x * 0.0035 - z * 0.007) * 0.35 +
+    (hash2Pub(Math.floor(x / 96), Math.floor(z / 96)) - 0.5) * 0.35
+  if (v > 0.46 && Math.hypot(x, z) > 45) return 'desert'
+  if (v < -0.22) return 'plains'
+  return 'forest'
+}
+
 type ChunkData = {
   cx: number
   cz: number
   group: THREE.Group
   trees: { mesh: THREE.Object3D; hp: number; px: number; pz: number; collider: boolean }[]
   stones: { mesh: THREE.Object3D; px: number; py: number; pz: number; hp: number; maxHp: number; oreKind: 'stone' | 'iron'; initialScale: number }[]
+  cacti: { mesh: THREE.Object3D; hp: number; px: number; pz: number; collider: boolean }[]
+  caves: { mesh: THREE.Object3D; x: number; y: number; z: number; radius: number; yaw: number }[]
   droppedItems: { netId: string; mesh: THREE.Object3D; id: ItemId; count: number; px: number; py: number; pz: number; vy: number; life: number }[]
   terrain: THREE.Mesh
 }
@@ -321,6 +369,17 @@ export default function GameCanvas() {
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x7a7a80, roughness: 0.95, metalness: 0.05 })
     const bushMat = new THREE.MeshStandardMaterial({ color: 0x385e2a, roughness: 0.9, metalness: 0 })
     const grassBladeMat = new THREE.MeshStandardMaterial({ color: 0x5a8c3d, roughness: 0.95, metalness: 0, side: THREE.DoubleSide })
+    const cactusMat = new THREE.MeshStandardMaterial({ color: 0x2f7d32, roughness: 0.88, metalness: 0 })
+    const cactusRidgeMat = new THREE.MeshStandardMaterial({ color: 0x4fa84f, roughness: 0.9, metalness: 0 })
+    const sapMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0x7c2d12, emissiveIntensity: 0.22, roughness: 0.28, metalness: 0, transparent: true, opacity: 0.9 })
+    const sapPuddleMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    const caveFloorMat = new THREE.MeshStandardMaterial({ color: 0x090a0d, roughness: 1, metalness: 0 })
+    const caveRockMat = new THREE.MeshStandardMaterial({ color: 0x2b2c33, roughness: 0.98, metalness: 0.04 })
+    const caveMouthMat = new THREE.MeshBasicMaterial({ color: 0x020204, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
+    const caveCrystalMat = new THREE.MeshBasicMaterial({ color: 0x5eead4, transparent: true, opacity: 0.82 })
+    const bedFrameMat = new THREE.MeshStandardMaterial({ color: 0x5a3720, roughness: 0.92, metalness: 0 })
+    const bedRollMat = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, roughness: 0.95, metalness: 0 })
+    const pillowMat = new THREE.MeshStandardMaterial({ color: 0xe7d8bf, roughness: 0.9, metalness: 0 })
     const woodWallMat = new THREE.MeshStandardMaterial({ color: 0x6b432a, roughness: 0.9, metalness: 0 })
     const woodWallPlankMat = new THREE.MeshStandardMaterial({ color: 0x7d4e2f, roughness: 0.92, metalness: 0 })
     const woodWallPlankAltMat = new THREE.MeshStandardMaterial({ color: 0x5f3b23, roughness: 0.92, metalness: 0 })
@@ -344,6 +403,16 @@ export default function GameCanvas() {
     const stoneGeo = new THREE.DodecahedronGeometry(0.5, 0)
     const bushGeo = new THREE.SphereGeometry(0.55, 8, 6)
     const grassBladeGeo = new THREE.PlaneGeometry(0.15, 0.45)
+    const cactusStemGeo = new THREE.CylinderGeometry(0.22, 0.28, 2.1, 9)
+    const cactusArmGeo = new THREE.CylinderGeometry(0.13, 0.15, 0.85, 8)
+    const cactusRidgeGeo = new THREE.BoxGeometry(0.035, 1.85, 0.035)
+    const sapDropGeo = new THREE.SphereGeometry(0.22, 18, 14)
+    const sapTipGeo = new THREE.ConeGeometry(0.12, 0.28, 14)
+    const sapPuddleGeo = new THREE.CircleGeometry(0.28, 24)
+    const caveFloorGeo = new THREE.CircleGeometry(1, 40)
+    const caveMouthGeo = new THREE.CircleGeometry(1, 32)
+    const caveCrystalGeo = new THREE.ConeGeometry(0.08, 0.42, 6)
+    const bedGhostGeo = new THREE.BoxGeometry(1.8, 0.55, 2.4)
     const wallGeo = new THREE.BoxGeometry(2, 2.4, 0.2)
     const floorGeo = new THREE.BoxGeometry(2, 0.15, 2)
     const dropGeo = new THREE.BoxGeometry(0.35, 0.35, 0.35)
@@ -401,6 +470,7 @@ export default function GameCanvas() {
       const cDirt = new THREE.Color(0x6b4a2a)
       const cRock = new THREE.Color(0x6d6d72)
       const cSand = new THREE.Color(0xb59a6a)
+      const caveSpec = caveSpecForChunk(cx, cz)
       for (let i = 0; i < count; i++) {
         const x = pos.getX(i) + cx * CHUNK_SIZE
         const z = pos.getZ(i) + cz * CHUNK_SIZE
@@ -409,14 +479,31 @@ export default function GameCanvas() {
         // deterministic variation
         const hn = (Math.sin(x * 0.37 + z * 0.13) + Math.cos(x * 0.09 - z * 0.21)) * 0.5
         const mix = Math.max(0, Math.min(1, (h + 1) / 6 + hn * 0.15))
+        const biome = biomeAt(x, z)
         const c = new THREE.Color().copy(cGrassDark).lerp(cGrassLight, mix)
-        // Low areas get a bit of sand/dirt
-        if (h < 0.4) c.lerp(cSand, Math.max(0, 0.4 - h) * 0.6)
-        // High areas get rocky
-        if (h > 3.5) c.lerp(cRock, Math.min(1, (h - 3.5) * 0.4))
-        // Add some random dirt patches
+        if (biome === 'desert') {
+          // Desert terrain: warm sand with subtle dune/rock variation.
+          c.copy(cSand).lerp(new THREE.Color(0xd9bd7a), Math.max(0, Math.min(1, 0.5 + hn * 0.35)))
+          if (h > 2.8) c.lerp(new THREE.Color(0x9c8054), Math.min(1, (h - 2.8) * 0.25))
+        } else if (biome === 'plains') {
+          c.copy(new THREE.Color(0x6f8541)).lerp(new THREE.Color(0xa7a35a), mix)
+          if (h < 0.4) c.lerp(cSand, Math.max(0, 0.4 - h) * 0.35)
+        } else {
+          // Low areas get a bit of sand/dirt
+          if (h < 0.4) c.lerp(cSand, Math.max(0, 0.4 - h) * 0.6)
+          // High areas get rocky
+          if (h > 3.5) c.lerp(cRock, Math.min(1, (h - 3.5) * 0.4))
+        }
+        // Add some random dirt patches outside deserts.
         const patchN = Math.sin(x * 1.7) * Math.cos(z * 1.3)
-        if (patchN > 0.7) c.lerp(cDirt, 0.3)
+        if (biome !== 'desert' && patchN > 0.7) c.lerp(cDirt, 0.3)
+        if (caveSpec) {
+          const caveD = Math.hypot(x - caveSpec.x, z - caveSpec.z)
+          if (caveD < caveSpec.radius * 1.35) {
+            const caveMix = Math.max(0, 1 - caveD / (caveSpec.radius * 1.35))
+            c.lerp(new THREE.Color(0x17181d), 0.75 * caveMix)
+          }
+        }
         colors[i * 3] = c.r
         colors[i * 3 + 1] = c.g
         colors[i * 3 + 2] = c.b
@@ -429,6 +516,30 @@ export default function GameCanvas() {
       return mesh
     }
 
+    function caveSpecForChunk(cx: number, cz: number) {
+      // Caves are intentionally rare and use a local-minimum test so they do
+      // not cluster. The origin stays cave-free to keep new-player starts calm.
+      const seed = hash2Pub(cx * 1777 + 91, cz * 2441 - 37)
+      if (seed > 0.11) return null
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          if (ox === 0 && oz === 0) continue
+          const ns = hash2Pub((cx + ox) * 1777 + 91, (cz + oz) * 2441 - 37)
+          if (ns < seed) return null
+        }
+      }
+      const rx = hash2Pub(cx * 911 + 13, cz * 619 + 29)
+      const rz = hash2Pub(cx * 353 + 71, cz * 827 + 5)
+      const x = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE * 0.62
+      const z = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE * 0.62
+      if (Math.hypot(x, z) < 85) return null
+      const y = heightAt(x, z)
+      if (y < 0.2 || biomeAt(x, z) === 'desert') return null
+      const radius = 4.8 + hash2Pub(cx * 41 + 9, cz * 73 + 17) * 1.8
+      const yaw = hash2Pub(cx * 97 + 3, cz * 151 + 11) * Math.PI * 2
+      return { x, y, z, radius, yaw }
+    }
+
     function generateChunk(cx: number, cz: number): ChunkData {
       const group = new THREE.Group()
       group.name = `chunk_${cx}_${cz}`
@@ -436,12 +547,16 @@ export default function GameCanvas() {
       group.add(terrain)
       const trees: ChunkData['trees'] = []
       const stones: ChunkData['stones'] = []
+      const cacti: ChunkData['cacti'] = []
+      const caves: ChunkData['caves'] = []
       const dropped: ChunkData['droppedItems'] = []
       // Deterministic scatter
       const rand = (a: number, b: number) => {
         const h = hash2Pub(cx * 131 + a, cz * 311 + b)
         return h
       }
+      const caveSpec = caveSpecForChunk(cx, cz)
+      const nearCave = (wx: number, wz: number, pad = 0) => !!caveSpec && Math.hypot(wx - caveSpec.x, wz - caveSpec.z) < caveSpec.radius + pad
       // trees - varied species (oak, pine, large oak), with randomized sizes
       for (let i = 0; i < 16; i++) {
         const rx = rand(i, i * 2 + 1)
@@ -449,7 +564,8 @@ export default function GameCanvas() {
         const wx = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE
         const wz = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE
         const wy = heightAt(wx, wz)
-        if (wy < 0.1) continue // skip lowlands
+        const biome = biomeAt(wx, wz)
+        if (wy < 0.1 || biome === 'desert' || nearCave(wx, wz, 2.5)) continue // skip lowlands, deserts, and cave clearings
         const tree = new THREE.Group()
         const species = rand(i + 13, i * 2) // 0..1
         const sizeVar = 0.8 + rand(i + 31, i + 7) * 0.6
@@ -519,6 +635,96 @@ export default function GameCanvas() {
         //   axe=6  → 2 hits, pickaxe=4 → 3 hits, sword=3 → 4 hits, fist=1 → 12 hits.
         trees.push({ mesh: tree, hp: 12, px: wx, pz: wz, collider: true })
       }
+      // Desert cactus plants. They replace trees/rocks in sandy biomes and
+      // can be broken for sap, the key material for beds.
+      for (let i = 0; i < 9; i++) {
+        const rx = rand(i + 901, i * 7 + 4)
+        const rz = rand(i * 11 + 17, i + 909)
+        const wx = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE
+        const wz = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE
+        const wy = heightAt(wx, wz)
+        if (wy < 0.05 || biomeAt(wx, wz) !== 'desert' || nearCave(wx, wz, 1.5)) continue
+        const cactus = new THREE.Group()
+        const stem = new THREE.Mesh(cactusStemGeo, cactusMat)
+        stem.position.y = 1.05
+        stem.castShadow = true
+        stem.receiveShadow = true
+        cactus.add(stem)
+        for (let r = 0; r < 4; r++) {
+          const ridge = new THREE.Mesh(cactusRidgeGeo, cactusRidgeMat)
+          const a = (r / 4) * Math.PI * 2
+          ridge.position.set(Math.cos(a) * 0.22, 1.05, Math.sin(a) * 0.22)
+          ridge.rotation.y = -a
+          cactus.add(ridge)
+        }
+        for (const side of [-1, 1] as const) {
+          if (rand(i + 30 + side, i + 71) < 0.35) continue
+          const arm = new THREE.Group()
+          const up = new THREE.Mesh(cactusArmGeo, cactusMat)
+          up.position.y = 0.42
+          up.castShadow = true
+          arm.add(up)
+          const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), cactusMat)
+          arm.add(elbow)
+          arm.position.set(side * 0.34, 0.95 + rand(i + 77, i + side) * 0.55, 0)
+          arm.rotation.z = side * Math.PI / 2
+          cactus.add(arm)
+        }
+        cactus.position.set(wx, wy, wz)
+        cactus.rotation.y = rand(i, i + 404) * Math.PI * 2
+        const size = 0.85 + rand(i + 501, i + 17) * 0.5
+        cactus.scale.setScalar(size)
+        group.add(cactus)
+        cacti.push({ mesh: cactus, hp: 8, px: wx, pz: wz, collider: true })
+      }
+
+      // Rare cave entrance: an unmistakably dark rocky hollow cut into the
+      // surface. Orc bosses are allowed to spawn only in these cave areas.
+      if (caveSpec) {
+        const cave = new THREE.Group()
+        const floor = new THREE.Mesh(caveFloorGeo, caveFloorMat)
+        floor.rotation.x = -Math.PI / 2
+        floor.scale.set(caveSpec.radius * 1.05, caveSpec.radius * 0.72, 1)
+        floor.position.y = 0.035
+        floor.receiveShadow = true
+        cave.add(floor)
+
+        const mouth = new THREE.Mesh(caveMouthGeo, caveMouthMat)
+        mouth.scale.set(caveSpec.radius * 0.68, caveSpec.radius * 0.48, 1)
+        mouth.position.set(0, 1.15, -caveSpec.radius * 0.42)
+        cave.add(mouth)
+
+        for (let r = 0; r < 12; r++) {
+          const a = Math.PI * (0.05 + (r / 11) * 0.9)
+          const sx = Math.cos(a) * caveSpec.radius * (0.88 + rand(r + 404, r + 1) * 0.18)
+          const sz = -Math.sin(a) * caveSpec.radius * 0.62
+          const rock = new THREE.Mesh(stoneGeo, caveRockMat)
+          const rs = 0.7 + rand(r + 701, r + 8) * 1.15
+          rock.scale.set(rs * 1.1, rs * (0.7 + Math.sin(a) * 1.15), rs)
+          rock.position.set(sx, 0.25 + rock.scale.y * 0.22, sz)
+          rock.rotation.set(rand(r, 61) * Math.PI, rand(r, 67) * Math.PI, rand(r, 71) * Math.PI)
+          rock.castShadow = true
+          rock.receiveShadow = true
+          cave.add(rock)
+        }
+
+        for (let k = 0; k < 5; k++) {
+          const crystal = new THREE.Mesh(caveCrystalGeo, caveCrystalMat)
+          const side = k % 2 === 0 ? -1 : 1
+          crystal.position.set(side * (1.15 + rand(k + 500, k) * 1.15), 0.25, -1.4 - rand(k + 55, k + 4) * 1.1)
+          crystal.rotation.z = (rand(k + 6, k + 7) - 0.5) * 0.5
+          cave.add(crystal)
+        }
+
+        const glow = new THREE.PointLight(0x3b82f6, 0.85, caveSpec.radius * 2.7, 2)
+        glow.position.set(0, 0.7, -caveSpec.radius * 0.25)
+        cave.add(glow)
+        cave.position.set(caveSpec.x, caveSpec.y + 0.015, caveSpec.z)
+        cave.rotation.y = caveSpec.yaw
+        group.add(cave)
+        caves.push({ mesh: cave, ...caveSpec })
+      }
+
       // stones on ground — includes occasional iron-ore variants that require a pickaxe.
       // Boulders are rare (2-3 per chunk) and iron ore is scarcer still (~10%)
       // so the world feels less cluttered and iron stays meaningful as a
@@ -530,6 +736,7 @@ export default function GameCanvas() {
         const wx = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE
         const wz = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE
         const wy = heightAt(wx, wz)
+        if (biomeAt(wx, wz) === 'desert' || nearCave(wx, wz, 1.2)) continue // deserts and cave clearings intentionally have no rocks
         // ~10% of boulders are iron ore (rustier, tougher)
         const isIron = rand(i + 777, i * 19) < 0.10
         const s = new THREE.Mesh(stoneGeo, isIron ? ironOreMat : stoneMat)
@@ -568,7 +775,7 @@ export default function GameCanvas() {
         const wx = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE
         const wz = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE
         const wy = heightAt(wx, wz)
-        if (wy < 0.15) continue
+        if (wy < 0.15 || biomeAt(wx, wz) === 'desert' || nearCave(wx, wz, 0.8)) continue
         // Use a tiny stone mesh attached to the chunk group.  We'll treat these
         // as pick-up drops by adding to droppedItems — the main render loop's
         // `tryPickupNearest()` picks them up when player comes close.
@@ -593,7 +800,7 @@ export default function GameCanvas() {
         const wx = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE
         const wz = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE
         const wy = heightAt(wx, wz)
-        if (wy < 0.1) continue
+        if (wy < 0.1 || biomeAt(wx, wz) === 'desert' || nearCave(wx, wz, 1.5)) continue
         const bush = new THREE.Mesh(bushGeo, bushMat)
         const bs = 0.8 + rand(i, 21) * 0.9
         bush.scale.set(bs, bs * 0.7, bs)
@@ -615,7 +822,7 @@ export default function GameCanvas() {
         const wx = cx * CHUNK_SIZE + (rx - 0.5) * CHUNK_SIZE
         const wz = cz * CHUNK_SIZE + (rz - 0.5) * CHUNK_SIZE
         const wy = heightAt(wx, wz)
-        if (wy < 0.2) { dummy.scale.setScalar(0); dummy.updateMatrix(); bladeInst.setMatrixAt(i, dummy.matrix); continue }
+        if (wy < 0.2 || biomeAt(wx, wz) === 'desert' || nearCave(wx, wz, 1.5)) { dummy.scale.setScalar(0); dummy.updateMatrix(); bladeInst.setMatrixAt(i, dummy.matrix); continue }
         dummy.position.set(wx, wy + 0.22, wz)
         dummy.rotation.y = rand(i, 55) * Math.PI * 2
         dummy.scale.setScalar(0.8 + rand(i, 3) * 0.8)
@@ -625,7 +832,7 @@ export default function GameCanvas() {
       bladeInst.instanceMatrix.needsUpdate = true
       group.add(bladeInst)
       scene.add(group)
-      return { cx, cz, group, trees, stones, droppedItems: dropped, terrain }
+      return { cx, cz, group, trees, stones, cacti, caves, droppedItems: dropped, terrain }
     }
 
     function disposeChunk(c: ChunkData) {
@@ -643,7 +850,7 @@ export default function GameCanvas() {
       c.terrain.geometry.dispose()
     }
 
-    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
+    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, caveFloorGeo, caveMouthGeo, caveCrystalGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
 
     function updateChunks(px: number, pz: number) {
       const pcx = Math.floor(px / CHUNK_SIZE)
@@ -700,6 +907,17 @@ export default function GameCanvas() {
       landed: boolean
       linger: number // seconds the fallen trunk lingers on the ground before breaking
       broken: boolean
+    }[] = []
+    const fallingCacti: {
+      mesh: THREE.Object3D
+      startQuat: THREE.Quaternion
+      endQuat: THREE.Quaternion
+      progress: number
+      duration: number
+      px: number
+      pz: number
+      landed: boolean
+      linger: number
     }[] = []
 
     // --- Third-person player character (more organic shapes) ---
@@ -899,6 +1117,20 @@ export default function GameCanvas() {
     heldRockMesh.castShadow = true
     heldRockMesh.visible = false
     weaponGroup.add(heldRockMesh)
+
+    // Held cactus sap — amber sticky droplet/blob (not a generic tool mesh).
+    const heldSapGroup = new THREE.Group()
+    const heldSapBlob = new THREE.Mesh(sapDropGeo, sapMat)
+    heldSapBlob.scale.set(0.55, 0.7, 0.55)
+    heldSapBlob.position.y = 0.06
+    heldSapBlob.castShadow = true
+    heldSapGroup.add(heldSapBlob)
+    const heldSapTip = new THREE.Mesh(sapTipGeo, sapMat)
+    heldSapTip.position.y = 0.25
+    heldSapTip.castShadow = true
+    heldSapGroup.add(heldSapTip)
+    heldSapGroup.visible = false
+    weaponGroup.add(heldSapGroup)
 
     // Held wood planks — flat wide planks, for 'wood' item
     const heldWoodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 })
@@ -1318,7 +1550,7 @@ export default function GameCanvas() {
       return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     }
 
-    function resourceKey(kind: 'tree' | 'stone', x: number, z: number) {
+    function resourceKey(kind: 'tree' | 'stone' | 'cactus', x: number, z: number) {
       return `${kind}:${x.toFixed(2)}:${z.toFixed(2)}`
     }
 
@@ -1330,7 +1562,7 @@ export default function GameCanvas() {
       pendingWorldEvents.push(evt)
     }
 
-    function removeResourceMesh(kind: 'tree' | 'stone', x: number, z: number, animated = false) {
+    function removeResourceMesh(kind: 'tree' | 'stone' | 'cactus', x: number, z: number, animated = false) {
       const key = resourceKey(kind, x, z)
       brokenResources.add(key)
       for (const c of chunks.values()) {
@@ -1346,12 +1578,28 @@ export default function GameCanvas() {
               fallingTrees.push({ mesh: t.mesh, startQuat, endQuat, progress: 0, duration: 1.1, px: t.px, pz: t.pz, axisX: 0, axisZ: 1, landed: false, linger: 1.3, broken: false })
             } else if (t.mesh.parent) t.mesh.parent.remove(t.mesh)
           }
-        } else {
+        } else if (kind === 'stone') {
           const idx = c.stones.findIndex(st => resourceKey('stone', st.px, st.pz) === key)
           if (idx >= 0) {
             const st = c.stones[idx]
             if (st.mesh.parent) st.mesh.parent.remove(st.mesh)
             c.stones.splice(idx, 1)
+          }
+        } else {
+          const idx = c.cacti.findIndex(ca => resourceKey('cactus', ca.px, ca.pz) === key)
+          if (idx >= 0) {
+            const ca = c.cacti[idx]
+            ca.collider = false
+            c.cacti.splice(idx, 1)
+            if (animated) {
+              const dx = ca.px - playerPos.x
+              const dz = ca.pz - playerPos.z
+              const len = Math.hypot(dx, dz) || 1
+              const axis = new THREE.Vector3(dz / len, 0, -dx / len).normalize()
+              const startQuat = ca.mesh.quaternion.clone()
+              const endQuat = new THREE.Quaternion().setFromAxisAngle(axis, Math.PI / 2).multiply(startQuat)
+              fallingCacti.push({ mesh: ca.mesh, startQuat, endQuat, progress: 0, duration: 0.9, px: ca.px, pz: ca.pz, landed: false, linger: 1.35 })
+            } else if (ca.mesh.parent) ca.mesh.parent.remove(ca.mesh)
           }
         }
       }
@@ -1370,6 +1618,13 @@ export default function GameCanvas() {
         if (stone && brokenResources.has(resourceKey('stone', stone.px, stone.pz))) {
           if (stone.mesh.parent) stone.mesh.parent.remove(stone.mesh)
           c.stones.splice(i, 1)
+        }
+      }
+      for (let i = c.cacti.length - 1; i >= 0; i--) {
+        const cactus = c.cacti[i]
+        if (cactus && brokenResources.has(resourceKey('cactus', cactus.px, cactus.pz))) {
+          if (cactus.mesh.parent) cactus.mesh.parent.remove(cactus.mesh)
+          c.cacti.splice(i, 1)
         }
       }
     }
@@ -1799,13 +2054,12 @@ export default function GameCanvas() {
     }
 
     function spawnVampire(id = makeNetId('v'), announce = true, sx?: number, sz?: number) {
+      if (!isNightTimeValue(timeOfDayAcc)) return
       if (vampires.some(v => v.id === id) || vampires.length >= MAX_VAMPIRES) return
-      const angle = Math.random() * Math.PI * 2
-      // Spawn well outside the player's immediate perception so they appear
-      // to close in from a distance instead of phasing in on top of the player.
-      const dist = 55 + Math.random() * 20
-      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
-      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
+      // Spawn on the surface only — never in cave entrances.
+      const spawn = findSurfaceSpawnPoint(55, 20, sx, sz)
+      if (!spawn) return
+      const { x, z } = spawn
       const y = heightAt(x, z)
       const v = createVampire(x, y, z, id)
       vampires.push(v)
@@ -1942,16 +2196,66 @@ export default function GameCanvas() {
       o.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
     }
 
+    function caveSpecNear(x: number, z: number, margin = 0) {
+      const ccx = Math.floor(x / CHUNK_SIZE)
+      const ccz = Math.floor(z / CHUNK_SIZE)
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          const spec = caveSpecForChunk(ccx + ox, ccz + oz)
+          if (!spec) continue
+          if (Math.hypot(x - spec.x, z - spec.z) <= spec.radius + margin) return spec
+        }
+      }
+      return null
+    }
+
+    function findSurfaceSpawnPoint(minDist: number, extraDist: number, sx?: number, sz?: number) {
+      if (typeof sx === 'number' && typeof sz === 'number') {
+        if (caveSpecNear(sx, sz, 1.5)) return null
+        return { x: sx, z: sz }
+      }
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = Math.random() * Math.PI * 2
+        const dist = minDist + Math.random() * extraDist
+        const x = playerPos.x + Math.cos(angle) * dist
+        const z = playerPos.z + Math.sin(angle) * dist
+        if (caveSpecNear(x, z, 1.5)) continue
+        return { x, z }
+      }
+      return null
+    }
+
+    function findLoadedCaveForOrc() {
+      const candidates: { x: number; y: number; z: number; radius: number; yaw: number; d2: number }[] = []
+      for (const c of chunks.values()) {
+        for (const cave of c.caves) {
+          const dx = cave.x - playerPos.x
+          const dz = cave.z - playerPos.z
+          const d2 = dx * dx + dz * dz
+          if (d2 < 16 * 16 || d2 > 135 * 135) continue
+          candidates.push({ ...cave, d2 })
+        }
+      }
+      if (!candidates.length) return null
+      candidates.sort((a, b) => a.d2 - b.d2)
+      return candidates[Math.min(candidates.length - 1, Math.floor(Math.random() * Math.min(3, candidates.length)))]
+    }
+
     function spawnOrc(id = makeNetId('o'), announce = true, sx?: number, sz?: number) {
-      if (orcs.some(o => o.id === id) || orcs.length >= MAX_ORCS) return
-      const angle = Math.random() * Math.PI * 2
-      const dist = 70 + Math.random() * 18
-      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
-      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
+      if (!isNightTimeValue(timeOfDayAcc)) return false
+      if (orcs.some(o => o.id === id) || orcs.length >= MAX_ORCS) return false
+      const cave = typeof sx === 'number' && typeof sz === 'number' ? caveSpecNear(sx, sz, 1.2) : findLoadedCaveForOrc()
+      if (!cave) return false
+      const inwardX = Math.sin(cave.yaw) * cave.radius * 0.25
+      const inwardZ = Math.cos(cave.yaw) * cave.radius * 0.25
+      const x = sx ?? (cave.x + inwardX)
+      const z = sz ?? (cave.z + inwardZ)
+      if (!caveSpecNear(x, z, 1.2)) return false
       const y = heightAt(x, z)
       orcs.push(createOrc(x, y, z, id))
       if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'orc', x, y, z })
-      useGame.getState().showToast('👹 A huge green orc boss roars in the distance!')
+      useGame.getState().showToast('👹 A huge green orc boss roars from a cave!')
+      return true
     }
 
     function knockDownOrc(o: OrcBoss, reason = 'weak spot') {
@@ -2356,7 +2660,37 @@ export default function GameCanvas() {
       spike_trap:   8,
       tree_stand:  40,
       furnace:     60,
+      bed:         20,
     }
+    function buildBedGroup(isSpawn = false) {
+      const g = new THREE.Group()
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.22, 2.35), bedFrameMat)
+      frame.position.y = 0.18
+      frame.castShadow = true; frame.receiveShadow = true
+      g.add(frame)
+      const roll = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.2, 1.55), bedRollMat)
+      roll.position.set(0, 0.42, 0.18)
+      roll.castShadow = true; roll.receiveShadow = true
+      g.add(roll)
+      const pillow = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.16, 0.42), pillowMat)
+      pillow.position.set(0, 0.52, -0.72)
+      pillow.castShadow = true; pillow.receiveShadow = true
+      g.add(pillow)
+      for (const x of [-0.72, 0.72]) for (const z of [-0.95, 0.95]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.35, 0.18), bedFrameMat)
+        leg.position.set(x, -0.03, z)
+        leg.castShadow = true
+        g.add(leg)
+      }
+      const marker = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.035, 8, 48), new THREE.MeshBasicMaterial({ color: 0x5eead4, transparent: true, opacity: 0.8 }))
+      marker.rotation.x = Math.PI / 2
+      marker.position.y = 0.03
+      marker.visible = isSpawn
+      ;(g as any).__spawnMarker = marker
+      g.add(marker)
+      return g
+    }
+
     function addStructureMesh(s: StructureData) {
       let obj: THREE.Object3D
       let wallMeta: { W: number; H: number; T: number } | null = null
@@ -2420,6 +2754,8 @@ export default function GameCanvas() {
         g.add(glow)
         ;(g as any).__furnaceGlow = glow
         obj = g
+      } else if (s.kind === 'bed') {
+        obj = buildBedGroup(!!s.spawn)
       } else {
         // tree_stand — stored position.y = groundY + 3.0 (platform centre).
         // Legs reach down from the platform to the ground; rungs follow.
@@ -2533,7 +2869,9 @@ export default function GameCanvas() {
         dropEquippedItem()
       }
       if (e.code === 'KeyE') {
-        tryPickupNearest()
+        if (mode === 'play' || mode === 'build') {
+          if (!tryInteractBed()) tryPickupNearest()
+        }
       }
     }
     const onKeyUp = (e: KeyboardEvent) => {
@@ -2765,6 +3103,23 @@ export default function GameCanvas() {
         cap2.rotation.y = -Math.PI / 2
         cap2.position.set(-0.526, 0.1, 0)
         group.add(cap2)
+      } else if (id === 'sap') {
+        const blob = new THREE.Mesh(sapDropGeo, sapMat)
+        blob.scale.set(0.85, 1.1, 0.85)
+        blob.position.y = 0.12
+        blob.castShadow = true
+        group.add(blob)
+        const tip = new THREE.Mesh(sapTipGeo, sapMat)
+        tip.position.y = 0.42
+        tip.castShadow = true
+        group.add(tip)
+        const puddle = new THREE.Mesh(sapPuddleGeo, sapPuddleMat)
+        puddle.rotation.x = -Math.PI / 2
+        puddle.position.y = -0.09
+        group.add(puddle)
+        const glow = new THREE.PointLight(0xf59e0b, 0.45, 2.4, 2)
+        glow.position.y = 0.25
+        group.add(glow)
       } else {
         const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(def.color) })
         const cube = new THREE.Mesh(dropGeo, mat)
@@ -2794,6 +3149,39 @@ export default function GameCanvas() {
       dropItemToWorld(id, 1, dx, dy, dz)
       s.removeItem(id, 1)
       if (s.inventory[s.hotbarIndex]?.id !== id) s.setHotbar(s.hotbarIndex)
+    }
+
+    function updateBedSpawnMarkers() {
+      for (const st of useGame.getState().structures) {
+        if (st.kind !== 'bed') continue
+        const sm = structureMeshes.get(st.id)
+        const marker = sm ? ((sm.mesh as any).__spawnMarker as THREE.Object3D | undefined) : undefined
+        if (marker) marker.visible = !!st.spawn
+      }
+    }
+
+    function setBedSpawnPoint(id: string) {
+      const state = useGame.getState()
+      const bed = state.structures.find(st => st.id === id && st.kind === 'bed')
+      if (!bed) return false
+      state.setStructures(state.structures.map(st => st.kind === 'bed' ? { ...st, spawn: st.id === id } : st))
+      updateBedSpawnMarkers()
+      queueWorldEvent('bed_spawn_set', { id })
+      state.showToast('🛏️ Respawn point set')
+      return true
+    }
+
+    function tryInteractBed() {
+      let best: { id: string; d2: number } | null = null
+      for (const st of useGame.getState().structures) {
+        if (st.kind !== 'bed') continue
+        const dx = st.x - playerPos.x
+        const dz = st.z - playerPos.z
+        const d2 = dx * dx + dz * dz
+        if (d2 < 3.2 * 3.2 && (!best || d2 < best.d2)) best = { id: st.id, d2 }
+      }
+      if (!best) return false
+      return setBedSpawnPoint(best.id)
     }
 
     function tryPickupNearest() {
@@ -2854,13 +3242,14 @@ export default function GameCanvas() {
     }
 
     function spawnZombie(id = makeNetId('z'), announce = true, sx?: number, sz?: number) {
+      if (!isNightTimeValue(timeOfDayAcc)) return
       if (zombies.some(z => z.id === id) || zombies.length >= MAX_ZOMBIES) return
-      const angle = Math.random() * Math.PI * 2
       // Push spawn point well outside the player's awareness so the horde
       // is seen shuffling in from the darkness rather than appearing instantly.
-      const dist = 42 + Math.random() * 22
-      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
-      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
+      // Zombies are surface monsters; cave interiors are reserved for orcs.
+      const spawn = findSurfaceSpawnPoint(42, 22, sx, sz)
+      if (!spawn) return
+      const { x, z } = spawn
       const y = heightAt(x, z)
       zombies.push(createZombie(x, y, z, id))
       if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'zombie', x, y, z })
@@ -2882,6 +3271,7 @@ export default function GameCanvas() {
       // real space in the base. RMB on the furnace opens the forge crafting
       // panel without needing to walk through it.
       furnace:    { halfW: 0.8,  halfD: 0.6,  topOffset: 0.9,   collide: true },
+      bed:        { halfW: 0.9,  halfD: 1.2,  topOffset: 0.55,  collide: true },
       tree_stand: { halfW: 1.2,  halfD: 1.2,  topOffset: 0.15,  collide: true },
     } as const
 
@@ -2903,6 +3293,17 @@ export default function GameCanvas() {
               const d = Math.sqrt(d2)
               pos.x = t.px + (dx / d) * minD
               pos.z = t.pz + (dz / d) * minD
+            }
+          }
+          for (const ca of c.cacti) {
+            if (!ca.collider) continue
+            const dx = pos.x - ca.px, dz = pos.z - ca.pz
+            const minD = r + 0.38
+            const d2 = dx * dx + dz * dz
+            if (d2 < minD * minD && d2 > 1e-6) {
+              const d = Math.sqrt(d2)
+              pos.x = ca.px + (dx / d) * minD
+              pos.z = ca.pz + (dz / d) * minD
             }
           }
           // Stones/boulders: use the boulder's original spawn scale so a
@@ -2955,12 +3356,24 @@ export default function GameCanvas() {
       zombies.length = 0
     }
 
+    function clearDaytimeHostiles() {
+      clearZombies()
+      for (const v of vampires) removeVampire(v)
+      vampires.length = 0
+      for (const g of goblins) removeGoblin(g)
+      goblins.length = 0
+      for (const o of orcs) removeOrc(o)
+      orcs.length = 0
+      ;(window as any).__nightfall_nearestEnemy = null
+      ;(window as any).__nightfall_boss = null
+    }
+
     function spawnGoblin(id = makeNetId('g'), announce = true, sx?: number, sz?: number) {
+      if (!isNightTimeValue(timeOfDayAcc)) return
       if (goblins.some(g => g.id === id) || goblins.length >= MAX_GOBLINS) return
-      const angle = Math.random() * Math.PI * 2
-      const dist = 38 + Math.random() * 18
-      const x = sx ?? (playerPos.x + Math.cos(angle) * dist)
-      const z = sz ?? (playerPos.z + Math.sin(angle) * dist)
+      const spawn = findSurfaceSpawnPoint(38, 18, sx, sz)
+      if (!spawn) return
+      const { x, z } = spawn
       const y = heightAt(x, z)
       goblins.push(createGoblin(x, y, z, id))
       if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'goblin', x, y, z })
@@ -2984,7 +3397,11 @@ export default function GameCanvas() {
     let last = performance.now()
     let acc = 0
     let timeOfDayAcc = useGame.getState().timeOfDay
-    let wasNight = false
+    // The day/night clock is anchored to wall-clock time instead of frame
+    // deltas, so it cannot drift when FPS changes, browser tabs sleep, or a
+    // multiplayer server sends an authoritative time correction.
+    let timeCycleOriginMs = Date.now() - timeOfDayToCycleSeconds(timeOfDayAcc) * 1000
+    let wasNight = isNightTimeValue(timeOfDayAcc)
     let zombieSpawnTimer = 3
     let vampireSpawnTimer = 30
     // Orc boss is rare, but guaranteed to appear after the world has been alive a while.
@@ -3227,12 +3644,13 @@ export default function GameCanvas() {
       appliedWorldEvents.add(evt.id)
       const p = evt.payload || {}
       if (evt.type === 'enemy_spawn') {
+        if (!isNightTimeValue(timeOfDayAcc)) return
         if (p.kind === 'zombie') spawnZombie(p.id, false, Number(p.x), Number(p.z))
         else if (p.kind === 'vampire') spawnVampire(p.id, false, Number(p.x), Number(p.z))
         else if (p.kind === 'goblin') spawnGoblin(p.id, false, Number(p.x), Number(p.z))
         else if (p.kind === 'orc') spawnOrc(p.id, false, Number(p.x), Number(p.z))
       } else if (evt.type === 'resource_break') {
-        if (p.kind === 'tree' || p.kind === 'stone') removeResourceMesh(p.kind, Number(p.x), Number(p.z), p.kind === 'tree')
+        if (p.kind === 'tree' || p.kind === 'stone' || p.kind === 'cactus') removeResourceMesh(p.kind, Number(p.x), Number(p.z), p.kind === 'tree' || p.kind === 'cactus')
       } else if (evt.type === 'item_drop') {
         if (p.itemId && !removedDropIds.has(String(p.netId))) dropItemToWorld(p.itemId as ItemId, Number(p.count || 1), Number(p.x), Number(p.y), Number(p.z), String(p.netId), false)
       } else if (evt.type === 'item_pickup') {
@@ -3248,6 +3666,12 @@ export default function GameCanvas() {
         removeStructureMesh(String(p.id))
       } else if (evt.type === 'structure_update') {
         useGame.getState().updateStructure(String(p.id), p.patch || {})
+        updateBedSpawnMarkers()
+      } else if (evt.type === 'bed_spawn_set') {
+        const id = String(p.id || '')
+        const state = useGame.getState()
+        state.setStructures(state.structures.map(st => st.kind === 'bed' ? { ...st, spawn: st.id === id } : st))
+        updateBedSpawnMarkers()
       } else if (evt.type === 'pvp_hit') {
         const targetId = String(p.targetId || '')
         if (targetId && targetId === ownMemberKey()) {
@@ -3275,6 +3699,10 @@ export default function GameCanvas() {
 
     function reconcileEnemySnapshots(snapshots: EnemySnapshot[]) {
       if (isWorldAuthority) return
+      if (!isNightTimeValue(timeOfDayAcc)) {
+        clearDaytimeHostiles()
+        return
+      }
       const seen = new Set<string>()
       for (const e of snapshots || []) {
         seen.add(e.id)
@@ -3311,7 +3739,9 @@ export default function GameCanvas() {
       isWorldAuthority = data.authorityId === worldClientId
       if (typeof data.timeOfDay === 'number') {
         timeOfDayAcc = data.timeOfDay
+        timeCycleOriginMs = Date.now() - timeOfDayToCycleSeconds(timeOfDayAcc) * 1000
         useGame.getState().setTime(timeOfDayAcc)
+        if (!isNightTimeValue(timeOfDayAcc)) clearDaytimeHostiles()
       }
       for (const evt of (data.events || []) as WorldEvent[]) applyWorldEvent(evt)
       if (data.snapshot?.entities) reconcileEnemySnapshots(data.snapshot.entities as EnemySnapshot[])
@@ -3327,33 +3757,19 @@ export default function GameCanvas() {
       const state = useGame.getState()
       if (state.mode !== 'dead') pvpDeathDropped = false
       const paused = state.mode === 'paused' || state.mode === 'dead'
-
-      // Time of day progression
-      if (!paused) {
-        // speed depends on whether day or night
-        const isNight = timeOfDayAcc < 0.2 || timeOfDayAcc > 0.8
-        const rate = isNight ? 1 / NIGHT_LENGTH_SEC : 1 / DAY_LENGTH_SEC
-        timeOfDayAcc = (timeOfDayAcc + dt * rate) % 1
-        state.setTime(timeOfDayAcc)
-        // Expose day/night countdown so the HUD can display it without polling internals.
-        {
-          let phase: 'day' | 'night'
-          let secondsLeft: number
-          if (timeOfDayAcc >= 0.2 && timeOfDayAcc <= 0.8) {
-            phase = 'day'
-            secondsLeft = (0.8 - timeOfDayAcc) * DAY_LENGTH_SEC
-          } else {
-            phase = 'night'
-            if (timeOfDayAcc > 0.8) {
-              // remaining portion of this night + the portion after midnight
-              secondsLeft = ((1 - timeOfDayAcc) + 0.2) * NIGHT_LENGTH_SEC
-            } else {
-              secondsLeft = (0.2 - timeOfDayAcc) * NIGHT_LENGTH_SEC
-            }
-          }
-          ;(window as any).__nightfall_phase = { phase, secondsLeft }
-        }
+      if (state.mode === 'dead') {
+        // Death leaves no visible local body/hand in the world view until respawn.
+        playerMesh.visible = false
+        weaponGroup.visible = false
+        fistGroup.visible = false
       }
+
+      // Time of day progression — based on real elapsed wall-clock time, not
+      // frame count. This keeps the HUD countdown, monster spawn gates, and
+      // server-authoritative multiplayer time in sync with actual time passing.
+      timeOfDayAcc = cycleSecondsToTimeOfDay((Date.now() - timeCycleOriginMs) / 1000)
+      state.setTime(timeOfDayAcc)
+      ;(window as any).__nightfall_phase = phaseInfoForTimeOfDay(timeOfDayAcc)
 
       // Sun/moon positions (sun arc)
       const sunAngle = timeOfDayAcc * Math.PI * 2 - Math.PI / 2 // 0.25 = east, 0.5 = noon overhead
@@ -3365,12 +3781,13 @@ export default function GameCanvas() {
       moonLight.target.position.copy(playerPos)
       // intensity & color based on time
       const daylight = Math.max(0, sunY) // 0 at horizon, 1 at noon
+      const isNightNow = isNightTimeValue(timeOfDayAcc)
       // Bigger, brighter daytime sun (less golden, more midday feel)
-      sun.intensity = Math.min(2.2, 0.4 + daylight * 2.0)
-      ambient.intensity = 0.22 + daylight * 0.75
-      hemi.intensity = 0.18 + daylight * 0.9
-      // Moon is strongest deep in night so stars & shadows remain readable.
-      moonLight.intensity = Math.max(0, (1 - Math.max(0, daylight + 0.05))) * 0.55
+      sun.intensity = isNightNow ? 0 : Math.min(2.2, 0.4 + daylight * 2.0)
+      ambient.intensity = isNightNow ? 0.035 : 0.22 + daylight * 0.75
+      hemi.intensity = isNightNow ? 0.02 : 0.18 + daylight * 0.9
+      // Nights are intentionally pitch-black overhead; the player torch is the main readable light.
+      moonLight.intensity = isNightNow ? 0 : Math.max(0, (1 - Math.max(0, daylight + 0.05))) * 0.25
 
       // Place the visible moon on the firmament opposite the sun.
       // It follows the camera horizontally so the horizon stays fixed.
@@ -3380,7 +3797,7 @@ export default function GameCanvas() {
       const moonPos = moonAnchor.clone().addScaledVector(moonDir, 200)
       moonMesh.position.copy(moonPos)
       moonGlow.position.copy(moonPos)
-      const moonVisibility = Math.max(0, Math.min(1, (0.15 - daylight) * 4))
+      const moonVisibility = isNightNow ? 0 : Math.max(0, Math.min(1, (0.15 - daylight) * 4))
       ;(moonMesh.material as THREE.MeshBasicMaterial).opacity = moonVisibility
       ;(moonGlow.material as THREE.MeshBasicMaterial).opacity = moonVisibility * 0.35
       moonMesh.visible = moonVisibility > 0.01
@@ -3395,23 +3812,22 @@ export default function GameCanvas() {
       const sunsetBot = new THREE.Color(0xff8a52)
       // Blend: day holds pure-day longer, sunset band is narrower.
       let topCol: THREE.Color, botCol: THREE.Color, fogCol: THREE.Color
-      if (daylight > 0.12) {
+      if (isNightNow) {
+        topCol = nightTop; botCol = nightBot
+      } else if (daylight > 0.12) {
         topCol = dayTop; botCol = dayBot
       } else if (daylight > 0) {
         const t = daylight / 0.12
         topCol = new THREE.Color().copy(sunsetTop).lerp(dayTop, t)
         botCol = new THREE.Color().copy(sunsetBot).lerp(dayBot, t)
       } else {
-        // night — rapidly fade to full black
-        const t = Math.min(1, -daylight / 0.1)
-        topCol = new THREE.Color().copy(sunsetTop).lerp(nightTop, t)
-        botCol = new THREE.Color().copy(sunsetBot).lerp(nightBot, t)
+        topCol = nightTop; botCol = nightBot
       }
       skyMat.uniforms.topColor.value.copy(topCol)
       skyMat.uniforms.bottomColor.value.copy(botCol)
       // Night: full-black fog so the horizon line disappears and everything
       // beyond the torch / moonlight range fades into true darkness.
-      if (daylight <= 0) {
+      if (isNightNow) {
         fogCol = new THREE.Color(0x000000)
       } else {
         fogCol = new THREE.Color().copy(botCol).multiplyScalar(0.7)
@@ -3419,12 +3835,12 @@ export default function GameCanvas() {
       scene.fog!.color.copy(fogCol)
       // Thicker fog at night for eerie atmosphere
       if ((scene.fog as any).density !== undefined) {
-        (scene.fog as any).density = daylight <= 0 ? 0.014 : 0.0075
+        (scene.fog as any).density = isNightNow ? 0.018 : 0.0075
       }
       ;(renderer as any).setClearColor(fogCol)
 
-      // Stars visible at night on the firmament; follow camera so horizon stays fixed
-      const starOpacity = Math.max(0, Math.min(0.95, -daylight * 2.2))
+      // The requested night sky is pitch black: no star/moon texture competing with the void.
+      const starOpacity = isNightNow ? 0 : Math.max(0, Math.min(0.35, (0.08 - daylight) * 2))
       starMat.opacity = starOpacity
       stars.visible = starOpacity > 0.01
       stars.position.set(camera.position.x, 0, camera.position.z)
@@ -3436,13 +3852,11 @@ export default function GameCanvas() {
       edgeRing.position.set(camera.position.x, -0.8, camera.position.z)
 
       // Night state transitions
-      const isNightNow = daylight <= 0
       if (isNightNow !== wasNight) {
         wasNight = isNightNow
         if (!isNightNow) {
-          // dawn: remove zombies, transform vampires into bats
-          clearZombies()
-          startVampireDawnFlight()
+          // dawn: daylight is safe — remove all active monsters.
+          clearDaytimeHostiles()
           state.showToast('🌅 Dawn breaks. The horde retreats.')
         } else {
           state.showToast('🌙 Nightfall... they are coming.')
@@ -3556,7 +3970,7 @@ export default function GameCanvas() {
         // are solid for enemies but walk-on-able for the player (platforms);
         // floors & spike traps are non-solid surfaces.
         for (const sm of structureMeshes.values()) {
-          if (sm.kind !== 'wall' && sm.kind !== 'log_wall' && sm.kind !== 'stone_wall' && sm.kind !== 'furnace') continue
+          if (sm.kind !== 'wall' && sm.kind !== 'log_wall' && sm.kind !== 'stone_wall' && sm.kind !== 'furnace' && sm.kind !== 'bed') continue
           const dims = (STRUCT_DIMS as any)[sm.kind]
           const dx = newX - sm.mesh.position.x
           const dz = newZ - sm.mesh.position.z
@@ -3600,6 +4014,18 @@ export default function GameCanvas() {
               if (!t.collider) continue
               const dx = newX - t.px, dz = newZ - t.pz
               const minD = PLAYER_RADIUS + 0.45
+              const d2 = dx * dx + dz * dz
+              if (d2 < minD * minD) {
+                const d = Math.sqrt(d2) || 0.001
+                const push = (minD - d)
+                newX += (dx / d) * push
+                newZ += (dz / d) * push
+              }
+            }
+            for (const ca of c.cacti) {
+              if (!ca.collider) continue
+              const dx = newX - ca.px, dz = newZ - ca.pz
+              const minD = PLAYER_RADIUS + 0.38
               const d2 = dx * dx + dz * dz
               if (d2 < minD * minD) {
                 const d = Math.sqrt(d2) || 0.001
@@ -3709,6 +4135,7 @@ export default function GameCanvas() {
           pickTip2.visible = false
           heldLogGroup.visible = false
           heldRockMesh.visible = false
+          heldSapGroup.visible = false
           heldWoodMesh.visible = false
           heldFurnaceMesh.visible = false
           heldWallMesh.visible = false
@@ -3749,6 +4176,8 @@ export default function GameCanvas() {
             heldLogGroup.visible = true
           } else if (eq === 'wood') {
             heldWoodMesh.visible = true
+          } else if (eq === 'sap') {
+            heldSapGroup.visible = true
           } else if (eq === 'stone' || eq === 'raw_iron' || eq === 'iron_ingot') {
             heldRockMesh.visible = true
             ;(heldRockMesh.material as THREE.MeshStandardMaterial).color.set(
@@ -3756,7 +4185,7 @@ export default function GameCanvas() {
             )
           } else if (eq === 'furnace') {
             heldFurnaceMesh.visible = true
-          } else if (eq === 'wall' || eq === 'floor' || eq === 'log_wall' || eq === 'log_floor' || eq === 'spike_trap' || eq === 'tree_stand') {
+          } else if (eq === 'wall' || eq === 'floor' || eq === 'log_wall' || eq === 'log_floor' || eq === 'spike_trap' || eq === 'tree_stand' || eq === 'bed') {
             heldWallMesh.visible = true
           } else if (eq === 'torn_shirt' || eq === 'shirt_common' || eq === 'shirt_rare' || eq === 'shirt_epic' || eq === 'shirt_legendary' || eq === 'shirt_godly') {
             heldShirtMesh.visible = true
@@ -4067,10 +4496,12 @@ export default function GameCanvas() {
         }
 
         // --- Huge Orc boss spawning & AI ---
-        if (isWorldAuthority) orcSpawnTimer -= dt
-        if (isWorldAuthority && orcSpawnTimer <= 0) {
-          orcSpawnTimer = 360 + Math.random() * 240
-          spawnOrc()
+        if (isNightNow && isWorldAuthority) orcSpawnTimer -= dt
+        if (isNightNow && isWorldAuthority && orcSpawnTimer <= 0) {
+          const spawned = spawnOrc()
+          // If the player has not discovered/loaded a cave yet, try again soon
+          // instead of forcing a surface spawn.
+          orcSpawnTimer = spawned ? 360 + Math.random() * 240 : 45 + Math.random() * 45
         }
         for (let i = orcs.length - 1; i >= 0; i--) {
           const o = orcs[i]
@@ -4212,10 +4643,10 @@ export default function GameCanvas() {
         }
 
         // --- Goblin spawning & AI ---
-        // Goblins appear at any time of day, sprint in, steal one inventory
+        // Goblins appear on the surface at night, sprint in, steal one inventory
         // stack, then bolt. Kill before they escape to recover the loot.
-        if (isWorldAuthority) goblinSpawnTimer -= dt
-        if (isWorldAuthority && goblinSpawnTimer <= 0) {
+        if (isNightNow && isWorldAuthority) goblinSpawnTimer -= dt
+        if (isNightNow && isWorldAuthority && goblinSpawnTimer <= 0) {
           // Next goblin sighting: 4–8 minutes later.
           goblinSpawnTimer = 240 + Math.random() * 240
           spawnGoblin()
@@ -4434,7 +4865,7 @@ export default function GameCanvas() {
         {
           const tNow = performance.now() / 1000
           for (const [, sm] of structureMeshes) {
-            if (sm.kind !== 'furnace') continue
+            if (sm.kind !== 'furnace' && sm.kind !== 'bed') continue
             const glow = (sm.mesh as any).__furnaceGlow as THREE.PointLight | undefined
             if (glow) {
               glow.intensity = 1.2 + 0.35 * Math.sin(tNow * 8 + sm.id.length) + 0.15 * Math.sin(tNow * 17)
@@ -4478,6 +4909,34 @@ export default function GameCanvas() {
               // by scaling down: gives a soft "decomposing" look.
               const s = Math.max(0.05, ft.linger)
               ft.mesh.scale.setScalar(s)
+            }
+          }
+        }
+
+        // --- Falling-cactus animation ---
+        // Cacti tip over with a snappy wobble and sticky amber sap already
+        // popping free as collectible drops.
+        for (let i = fallingCacti.length - 1; i >= 0; i--) {
+          const fc = fallingCacti[i]
+          if (!fc.landed) {
+            fc.progress += dt / fc.duration
+            const t = Math.min(1, fc.progress)
+            const eased = t < 0.72 ? 1 - Math.pow(1 - t / 0.72, 3) * 0.18 : 1
+            const q = fc.startQuat.clone().slerp(fc.endQuat, Math.min(1, t * t * (3 - 2 * t)))
+            fc.mesh.quaternion.copy(q)
+            fc.mesh.rotation.y += Math.sin(t * Math.PI * 8) * (1 - t) * 0.025
+            fc.mesh.position.y = heightAt(fc.px, fc.pz) + Math.sin(Math.min(1, t) * Math.PI) * 0.05 * eased
+            if (t >= 1) {
+              fc.landed = true
+              fc.mesh.position.y = heightAt(fc.px, fc.pz) + 0.03
+            }
+          } else {
+            fc.linger -= dt
+            if (fc.linger <= 0) {
+              if (fc.mesh.parent) fc.mesh.parent.remove(fc.mesh)
+              fallingCacti.splice(i, 1)
+            } else if (fc.linger < 0.85) {
+              fc.mesh.scale.setScalar(Math.max(0.05, fc.linger / 0.85))
             }
           }
         }
@@ -4852,12 +5311,13 @@ export default function GameCanvas() {
       const targets: THREE.Object3D[] = []
       const pcx = Math.floor(playerPos.x / CHUNK_SIZE)
       const pcz = Math.floor(playerPos.z / CHUNK_SIZE)
-      const chunkObjs: { chunk: ChunkData; obj: THREE.Object3D; kind: 'tree' | 'stone'; ref: any }[] = []
+      const chunkObjs: { chunk: ChunkData; obj: THREE.Object3D; kind: 'tree' | 'stone' | 'cactus'; ref: any }[] = []
       for (let dcx = -1; dcx <= 1; dcx++) {
         for (let dcz = -1; dcz <= 1; dcz++) {
           const c = chunks.get(chunkKey(pcx + dcx, pcz + dcz))
           if (!c) continue
           for (const t of c.trees) { if (t.collider) { targets.push(t.mesh); chunkObjs.push({ chunk: c, obj: t.mesh, kind: 'tree', ref: t }) } }
+          for (const ca of c.cacti) { if (ca.collider) { targets.push(ca.mesh); chunkObjs.push({ chunk: c, obj: ca.mesh, kind: 'cactus', ref: ca }) } }
           for (const s of c.stones) { targets.push(s.mesh); chunkObjs.push({ chunk: c, obj: s.mesh, kind: 'stone', ref: s }) }
         }
       }
@@ -4942,6 +5402,27 @@ export default function GameCanvas() {
 
             useGame.getState().showToast('🌳 Timberrr!')
           }
+        } else if (entry.kind === 'cactus') {
+          const isCosmetic = !!eq && !ITEMS[eq]?.damage
+          if (isCosmetic) {
+            useGame.getState().showToast('🌵 Use hands or a tool to break cactus')
+            return
+          }
+          const cactusDamage = !eq ? 1
+            : eq === 'iron_axe' || eq === 'stone_axe' || eq === 'iron_sword' || eq === 'stone_sword' ? 4
+            : eq === 'iron_pickaxe' || eq === 'stone_pickaxe' ? 2
+            : 1
+          entry.ref.hp -= cactusDamage
+          entry.ref.mesh.rotation.z = 0.07
+          setTimeout(() => { if (entry.ref.mesh) entry.ref.mesh.rotation.z = 0 }, 100)
+          if (entry.ref.hp <= 0) {
+            entry.ref.collider = false
+            const count = 1 + Math.floor(Math.random() * 3)
+            dropItemToWorld('sap', count, entry.ref.px, heightAt(entry.ref.px, entry.ref.pz) + 0.5, entry.ref.pz)
+            queueWorldEvent('resource_break', { kind: 'cactus', x: entry.ref.px, z: entry.ref.pz })
+            removeResourceMesh('cactus', entry.ref.px, entry.ref.pz, true)
+            useGame.getState().showToast(`🌵 Cactus falls! +${count} Sap`)
+          }
         } else if (entry.kind === 'stone') {
           const isIron = entry.ref.oreKind === 'iron'
           const isPickaxe = eq === 'stone_pickaxe' || eq === 'iron_pickaxe'
@@ -5006,6 +5487,7 @@ export default function GameCanvas() {
       else if (kind === 'log_floor') geo = logFloorGeo
       else if (kind === 'spike_trap') geo = trapBaseGeo
       else if (kind === 'furnace') geo = furnaceGeo
+      else if (kind === 'bed') geo = bedGhostGeo
       else geo = standPlatformGeo
       if (!buildGhost || (buildGhost.geometry !== geo)) {
         if (buildGhost) scene.remove(buildGhost)
@@ -5080,6 +5562,9 @@ export default function GameCanvas() {
       } else if (kind === 'furnace') {
         buildGhost.position.set(sx, sy + 0.9, sz)
         buildGhost.rotation.y = Math.abs(forward.x) > Math.abs(forward.z) ? Math.PI / 2 : 0
+      } else if (kind === 'bed') {
+        buildGhost.position.set(sx, sy + 0.28, sz)
+        buildGhost.rotation.y = Math.abs(forward.x) > Math.abs(forward.z) ? Math.PI / 2 : 0
       } else {
         // tree_stand platform ghost at full height
         buildGhost.position.set(sx, sy + 3.0, sz)
@@ -5108,6 +5593,7 @@ export default function GameCanvas() {
         for (const id of Array.from(structureMeshes.keys())) {
           if (!seen.has(id)) removeStructureMesh(id)
         }
+        updateBedSpawnMarkers()
       }
     })
 
@@ -5125,6 +5611,19 @@ export default function GameCanvas() {
     }
     ;(window as any).__nightfallSave = save
     ;(window as any).__nightfallRequestLock = () => requestPointerLockSafe()
+    ;(window as any).__nightfallRespawn = () => {
+      const state = useGame.getState()
+      const bed = state.structures.find(st => st.kind === 'bed' && st.spawn)
+      const x = bed ? bed.x + Math.sin(bed.ry) * 1.7 : 0
+      const z = bed ? bed.z + Math.cos(bed.ry) * 1.7 : 0
+      playerPos.set(x, heightAt(x, z) + PLAYER_HEIGHT + 0.2, z)
+      playerVel.set(0, 0, 0)
+      walkTarget = null
+      attackTimer = 0
+      updateChunks(playerPos.x, playerPos.z)
+      pvpDeathDropped = false
+      return !!bed
+    }
     ;(window as any).__nightfallTeleport = (x: number, z: number) => {
       playerPos.x = x
       playerPos.z = z
@@ -5146,6 +5645,7 @@ export default function GameCanvas() {
       unsubscribeMode()
       releasePointerLockSafe()
       unsub()
+      try { delete (window as any).__nightfallRespawn } catch {}
       try { getGameAudio().stop() } catch {}
       // dispose
       for (const c of chunks.values()) disposeChunk(c)

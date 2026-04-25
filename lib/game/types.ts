@@ -2,6 +2,7 @@ export type ItemId =
   | 'wood'
   | 'log'
   | 'stone'
+  | 'sap'
   | 'stone_pickaxe'
   | 'stone_sword'
   | 'stone_axe'
@@ -14,6 +15,7 @@ export type ItemId =
   | 'log_floor'
   | 'spike_trap'
   | 'tree_stand'
+  | 'bed'
   // Iron-tier progression
   | 'raw_iron'
   | 'iron_ingot'
@@ -44,7 +46,7 @@ export interface ItemDef {
   image?: string // optional /items/<id>.png for richer inventory art
   stack: number
   damage?: number
-  placeable?: 'wall' | 'floor' | 'trap' | 'stand' | 'furnace'
+  placeable?: 'wall' | 'floor' | 'trap' | 'stand' | 'furnace' | 'bed'
   cosmeticSlot?: CosmeticSlot
   description: string
   color: string // accent color for slot
@@ -94,6 +96,7 @@ export type StructureKind =
   | 'spike_trap'
   | 'tree_stand'
   | 'furnace'
+  | 'bed'
 
 export interface StructureData {
   id: string
@@ -106,6 +109,8 @@ export interface StructureData {
   // HP for the given kind (used for forward/backward compat with old saves).
   hp?: number
   maxHp?: number
+  // Beds can be marked as the active respawn point.
+  spawn?: boolean
 }
 
 export interface SaveData {

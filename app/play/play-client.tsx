@@ -346,7 +346,11 @@ export default function PlayClient() {
       {mode === 'build' && <BuildPanel />}
       {mode === 'paused' && <PausePanel onSave={saveGame} onLeaveServer={leaveServer} />}
       {mode === 'dead' && (
-        <DeathPanel onRespawn={() => { respawn(); showToast('You rise again.') }} />
+        <DeathPanel onRespawn={() => {
+          const usedBed = typeof window !== 'undefined' ? (window as any).__nightfallRespawn?.() : false
+          respawn()
+          showToast(usedBed ? 'You wake at your bed.' : 'You rise again at the original camp.')
+        }} />
       )}
 
       {/* Server/player indicator (top-left, opposite the level bar) */}

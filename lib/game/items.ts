@@ -4,6 +4,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   wood: { id: 'wood', name: 'Wood Planks', icon: '🪵', image: '/items/wood.png', stack: 64, description: 'Chopped wood planks. Crafted from raw logs.', color: '#8b5a2b' },
   log: { id: 'log', name: 'Raw Log', icon: '🪵', image: '/items/log.png', stack: 32, description: 'A whole felled log. Chop down into 4 Wood Planks at the crafting bench.', color: '#5a3720' },
   stone: { id: 'stone', name: 'Stone', icon: '🪨', image: '/items/stone.png', stack: 64, description: 'Mined from boulders with a pickaxe, or picked up off the ground.', color: '#9ca3af' },
+  sap: { id: 'sap', name: 'Cactus Sap', icon: '🟠', image: '/items/sap.png', stack: 64, description: 'Sticky amber-gold desert sap harvested from cactus plants. Used for beds and survival crafting.', color: '#f59e0b' },
 
   // Stone tools
   stone_pickaxe: { id: 'stone_pickaxe', name: 'Stone Pickaxe', icon: '⛏️', image: '/items/stone_pickaxe.png', stack: 1, damage: 15, tool: 'pickaxe', tier: 1, description: 'Mines stone and raw iron. 15 damage.', color: '#a1a1aa' },
@@ -33,6 +34,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   log_floor: { id: 'log_floor', name: 'Log Floor', icon: '🟫', stack: 16, placeable: 'floor', description: 'Split-log platform, elevated above the ground.', color: '#734a2a' },
   spike_trap: { id: 'spike_trap', name: 'Spike Trap', icon: '☘️', stack: 8, placeable: 'trap', description: 'Sharpened stakes. Damages any enemy that walks onto it.', color: '#b91c1c' },
   tree_stand: { id: 'tree_stand', name: 'Tree Stand', icon: '🌲', stack: 4, placeable: 'stand', description: 'Elevated hunting platform with a ladder. Snipe enemies in safety.', color: '#365314' },
+  bed: { id: 'bed', name: 'Survivor Bed', icon: '🛏️', stack: 4, placeable: 'bed', description: 'Place and interact with it to set a new respawn point.', color: '#7c2d12' },
 
   // --- Tattered clothing — scavenged cosmetics (legacy, no defense).
   torn_shirt: { id: 'torn_shirt', name: 'Tattered Shirt', icon: '👕', stack: 1, cosmeticSlot: 'shirt', description: 'Torn and bloodied. Scrap cloth — offers no real protection.', color: '#92400e' },
@@ -98,6 +100,7 @@ export const RECIPES: Recipe[] = [
   { id: 'stone_wall', name: 'Stone Wall', inputs: [{ id: 'stone', count: 8 }], output: { id: 'stone_wall', count: 1 } },
   { id: 'spike_trap', name: 'Spike Trap', inputs: [{ id: 'wood', count: 4 }, { id: 'stone', count: 2 }], output: { id: 'spike_trap', count: 1 } },
   { id: 'tree_stand', name: 'Tree Stand', inputs: [{ id: 'wood', count: 12 }], output: { id: 'tree_stand', count: 1 } },
+  { id: 'bed', name: 'Survivor Bed', inputs: [{ id: 'wood', count: 10 }, { id: 'sap', count: 5 }], output: { id: 'bed', count: 1 } },
 ]
 
 // Cosmetic shop listings — prices displayed in the upcoming credits currency.

@@ -37,7 +37,7 @@ export interface GameState {
   zombiesKilled: number
   deaths: number
   structures: StructureData[]
-  buildSelection: 'wall' | 'floor' | 'log_wall' | 'stone_wall' | 'log_floor' | 'spike_trap' | 'tree_stand' | 'furnace'
+  buildSelection: 'wall' | 'floor' | 'log_wall' | 'stone_wall' | 'log_floor' | 'spike_trap' | 'tree_stand' | 'furnace' | 'bed'
   toast: { text: string; at: number } | null
   // Current crafting panel context — controls which recipes are visible.
   craftingContext: CraftingContext
@@ -75,7 +75,7 @@ export interface GameState {
   addStructure: (s: StructureData) => void
   removeStructure: (id: string) => void
   setStructures: (s: StructureData[]) => void
-  setBuildSelection: (k: 'wall' | 'floor' | 'log_wall' | 'stone_wall' | 'log_floor' | 'spike_trap' | 'tree_stand' | 'furnace') => void
+  setBuildSelection: (k: 'wall' | 'floor' | 'log_wall' | 'stone_wall' | 'log_floor' | 'spike_trap' | 'tree_stand' | 'furnace' | 'bed') => void
   updateStructure: (id: string, patch: Partial<StructureData>) => void
   setInventory: (inv: InventorySlot[]) => void
   equipCosmetic: (slot: CosmeticSlot, id: ItemId | null) => void
