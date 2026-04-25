@@ -27,9 +27,13 @@ const ZOMBIE_HEALTH = 50
 const ZOMBIE_DAMAGE = 8
 const ZOMBIE_ATTACK_RANGE = 1.8
 const MAX_ZOMBIES = 8
-const ZOMBIE_SPAWN_MIN_DELAY = 75
-const ZOMBIE_SPAWN_RANDOM_DELAY = 55
+// Zombies should feel like the common night threat. Keep their average spawn
+// delay just below vampires (38–72s vs. vampires' 45–75s) without making the
+// horde overwhelming.
+const ZOMBIE_SPAWN_MIN_DELAY = 38
+const ZOMBIE_SPAWN_RANDOM_DELAY = 34
 const TORCH_ATTACK_DURABILITY_COST_SEC = 2 * 60
+const TORCH_DURABILITY_PERSIST_INTERVAL_MS = 5000
 // Torch light is intentionally measured in the same player-facing "feet" scale
 // used by item text: a lit torch should clearly illuminate a 20-foot radius.
 const TORCH_LIGHT_RANGE_FT = 20
@@ -1506,6 +1510,9 @@ export default function GameCanvas() {
     }
 
     const heldTorchGroup = buildHeldTorchGroup()
+    // Main-hand torch viewmodel: smaller so it still communicates light/fire
+    // without filling the center of the first-person screen.
+    heldTorchGroup.scale.setScalar(0.72)
     heldTorchGroup.visible = false
     weaponGroup.add(heldTorchGroup)
 
@@ -1708,9 +1715,9 @@ export default function GameCanvas() {
     // Offhand torch: separate left-hand view model so the main hand can still
     // swing a weapon/tool while the light source is equipped.
     const offhandTorchGroup = buildHeldTorchGroup()
-    offhandTorchGroup.position.set(-0.46, -0.34, -0.72)
+    offhandTorchGroup.position.set(-0.46, -0.38, -0.78)
     offhandTorchGroup.rotation.set(0.4, 0.2, 0.22)
-    offhandTorchGroup.scale.setScalar(1.15)
+    offhandTorchGroup.scale.setScalar(0.78)
     offhandTorchGroup.visible = false
     camera.add(offhandTorchGroup)
 
@@ -1747,6 +1754,7 @@ export default function GameCanvas() {
     const brokenResources = new Set<string>()
     const removedDropIds = new Set<string>()
     let pvpDeathDropped = false
+    let lastTorchDurabilityPersistMs = 0
     let playerBurnUntil = 0
     let playerBurnTick = 0
     let playerTrapDamageBank = 0
@@ -4382,6 +4390,31 @@ export default function GameCanvas() {
 
     const raycaster = new THREE.Raycaster()
 
+    function playerHasAnyTorch(state = useGame.getState()) {
+      return state.offhandItem === 'torch' || state.inventory.some(slot => slot?.id === 'torch' && slot.count > 0)
+    }
+
+    function persistTorchDurability(force = false) {
+      const now = performance.now()
+      if (!force && now - lastTorchDurabilityPersistMs < TORCH_DURABILITY_PERSIST_INTERVAL_MS) return
+      lastTorchDurabilityPersistMs = now
+      const s = useGame.getState()
+      try {
+        const sid = window.localStorage.getItem('nightfall:serverId') || 'default'
+        window.localStorage.setItem(`nightfall:offhand:${sid}`, s.offhandItem || '')
+        window.localStorage.setItem(`nightfall:torchDurability:${sid}`, String(s.torchDurability))
+      } catch {}
+      try { (window as any).__nightfallPersistGame?.() } catch {}
+    }
+
+    function consumeExpiredTorch(state = useGame.getState(), message = '🕯️ Your torch burned out.') {
+      if (state.offhandItem === 'torch') state.setOffhand(null)
+      else state.removeItem('torch', 1)
+      state.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
+      state.showToast(message)
+      persistTorchDurability(true)
+    }
+
     function animate() {
       gameRef.current.raf = requestAnimationFrame(animate)
       const now = performance.now()
@@ -4398,17 +4431,14 @@ export default function GameCanvas() {
         offhandTorchGroup.visible = false
       }
 
-      // Lit torches have a shared 15-minute burn timer. Main-hand or offhand
-      // use both consume that timer; fresh crafted/equipped torches reset it.
-      const torchLit = state.mode !== 'dead' && (state.offhandItem === 'torch' || state.equippedItem === 'torch')
-      if (!paused && torchLit) {
+      // Torches have a shared 15-minute burn timer and now decay passively
+      // whenever the player owns one — even if it is only sitting in inventory.
+      // The timer is persisted during decay so a quit/reload cannot restore time.
+      const ownsTorch = state.mode !== 'dead' && playerHasAnyTorch(state)
+      if (!paused && ownsTorch) {
         const expired = state.damageTorchDurability(dt)
-        if (expired) {
-          if (useGame.getState().offhandItem === 'torch') state.setOffhand(null)
-          if (useGame.getState().equippedItem === 'torch') state.removeItem('torch', 1)
-          state.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
-          state.showToast('🕯️ Your torch burned out.')
-        }
+        persistTorchDurability(false)
+        if (expired) consumeExpiredTorch(useGame.getState())
       }
 
       // Fire damage on the local player from PvP torch hits.
@@ -5977,9 +6007,11 @@ export default function GameCanvas() {
         const expired = s.damageTorchDurability(TORCH_ATTACK_DURABILITY_COST_SEC)
         if (expired) {
           s.removeItem('torch', 1)
-          if (s.offhandItem === 'torch') s.setOffhand(null)
           s.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
           s.showToast('🔥 Final torch strike! It burns out.')
+          persistTorchDurability(true)
+        } else {
+          persistTorchDurability(false)
         }
         return true
       }
@@ -6595,7 +6627,7 @@ export default function GameCanvas() {
         health: s.health, level: s.level, xp: s.xp,
         posX: playerPos.x, posY: playerPos.y, posZ: playerPos.z,
         timeOfDay: s.timeOfDay, equippedItem: s.equippedItem, offhandItem: s.offhandItem,
-        torchDurability: s.torchDurability,
+        torchDurability: s.torchDurability, hasReceivedStarterTorch: s.hasReceivedStarterTorch,
         inventory: s.inventory, structures: s.structures,
         deaths: s.deaths, zombiesKilled: s.zombiesKilled,
       }
@@ -6611,8 +6643,8 @@ export default function GameCanvas() {
       playerVel.set(0, 0, 0)
       walkTarget = null
       attackTimer = 0
-      state.setOffhand('torch')
-      state.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
+      // Do not grant another starter torch here; the one free torch is assigned
+      // only when a new save slot first spawns on this server.
       updateChunks(playerPos.x, playerPos.z)
       pvpDeathDropped = false
       return !!bed

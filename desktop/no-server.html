@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nightfall: Last Survivor</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #050505; color: #eee; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; }
+    body { display: grid; place-items: center; }
+    .card { width: min(720px, calc(100vw - 48px)); padding: 32px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: radial-gradient(circle at top, rgba(140, 18, 18, .25), rgba(20,20,24,.92)); box-shadow: 0 24px 90px rgba(0,0,0,.65); text-align: center; }
+    img { width: min(320px, 70vw); border-radius: 14px; margin-bottom: 22px; }
+    h1 { margin: 0 0 12px; font-size: 30px; letter-spacing: .04em; }
+    p { margin: 10px 0; color: #c9c9cf; line-height: 1.55; }
+    code { color: #fff; background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img src="../public/branding/nightfall-logo.png" alt="Nightfall: Last Survivor" />
+    <h1>Game server not configured</h1>
+    <p>This desktop app is a protected launcher shell. Build it with <code>NIGHTFALL_GAME_URL</code> set to your live Nightfall server URL so players receive updates automatically from the server.</p>
+    <p>Example: <code>NIGHTFALL_GAME_URL=https://your-domain.com npm run dist:win</code></p>
+  </main>
+</body>
+</html>

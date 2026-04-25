@@ -129,12 +129,15 @@ export default function PlayClient() {
         setHealth(data.health)
         setLevel(data.level, data.xp)
         setTime(data.timeOfDay)
+        // Existing saves (including legacy saves without this field) have already
+        // had their one server starter-spawn opportunity. Only brand-new save
+        // slots below receive the starter torch.
+        useGame.getState().setHasReceivedStarterTorch(true)
         const savedOffhand = data.offhandItem === 'torch' ? 'torch' : (() => {
           try {
             const raw = localStorage.getItem(`nightfall:offhand:${sid || 'default'}`)
-            // Legacy saves did not store offhand; give those survivors the new starter torch.
-            return raw === null ? 'torch' : raw === 'torch' ? 'torch' : null
-          } catch { return 'torch' }
+            return raw === 'torch' ? 'torch' : null
+          } catch { return null }
         })()
         useGame.getState().setOffhand(savedOffhand)
         const savedTorchDurability = (() => {
@@ -163,6 +166,17 @@ export default function PlayClient() {
           const t = (window as any).__nightfallTeleport
           if (t && data.posX !== undefined) t(data.posX, data.posZ)
         }, 500)
+      } else {
+        // First spawn ever for this identity/server slot: grant the only free
+        // starter torch and mark it consumed so respawns do not re-grant it.
+        const game = useGame.getState()
+        game.setOffhand('torch')
+        game.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
+        game.setHasReceivedStarterTorch(true)
+        try {
+          localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, 'torch')
+          localStorage.setItem(`nightfall:torchDurability:${sid || 'default'}`, String(TORCH_MAX_DURABILITY_SEC))
+        } catch {}
       }
       setLoaded(true)
     }).catch(() => setLoaded(true))
@@ -175,6 +189,48 @@ export default function PlayClient() {
     const interval = setInterval(() => { saveGame().catch(() => {}) }, 30_000)
     return () => clearInterval(interval)
   }, [authed])
+
+  // Update-drop refresh: every connected client polls the server build version.
+  // When a deployment changes it, players save and reload into the new build.
+  useEffect(() => {
+    if (!authed) return
+    let cancelled = false
+    let currentVersion: string | null = null
+    let reloading = false
+    async function checkVersion() {
+      try {
+        const r = await fetch('/api/version', { cache: 'no-store' })
+        if (!r.ok) return
+        const data = await r.json().catch(() => null) as { version?: string } | null
+        const nextVersion = typeof data?.version === 'string' ? data.version : null
+        if (!nextVersion || cancelled) return
+        if (!currentVersion) {
+          currentVersion = nextVersion
+          return
+        }
+        if (nextVersion !== currentVersion && !reloading) {
+          reloading = true
+          showToast('⬇️ Nightfall update found. Saving and refreshing...')
+          try { await saveGame() } catch {}
+          window.setTimeout(() => window.location.reload(), 1200)
+        }
+      } catch {}
+    }
+    checkVersion()
+    const interval = window.setInterval(checkVersion, 20_000)
+    return () => { cancelled = true; window.clearInterval(interval) }
+  }, [authed, showToast])
+
+  // Allow the game loop to request a throttled persistence write when important
+  // runtime-only values (notably passive torch durability) change between normal
+  // autosave ticks.
+  useEffect(() => {
+    if (!authed) return
+    ;(window as any).__nightfallPersistGame = () => { saveGame().catch(() => {}) }
+    return () => { try { delete (window as any).__nightfallPersistGame } catch {} }
+    // saveGame is a component function; refreshing this hook each render keeps
+    // the exposed callback pointed at the latest closure.
+  })
 
   // Presence heartbeat loop: every 3s, send our position and receive ghosts
   useEffect(() => {
@@ -274,7 +330,7 @@ export default function PlayClient() {
         const save = (window as any).__nightfallSave?.() ?? {
           health: state.health, level: state.level, xp: state.xp, posX: 0, posY: 2, posZ: 0,
           timeOfDay: state.timeOfDay, equippedItem: state.equippedItem, offhandItem: state.offhandItem,
-          torchDurability: state.torchDurability,
+          torchDurability: state.torchDurability, hasReceivedStarterTorch: state.hasReceivedStarterTorch,
           inventory: state.inventory, structures: state.structures, deaths: state.deaths, zombiesKilled: state.zombiesKilled,
         }
         const sid = serverIdRef.current

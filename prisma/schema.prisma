@@ -1,52 +1,55 @@
 generator client {
-    provider = "prisma-client-js"
-    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
-    output = "/home/ubuntu/nightfall_last_survivors/nextjs_space/node_modules/.prisma/client"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+  output        = "/home/ubuntu/nightfall_last_survivors/nextjs_space/node_modules/.prisma/client"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id             String         @id @default(cuid())
-  username       String         @unique
-  email          String?        @unique
-  passwordHash   String
-  isAdmin        Boolean        @default(false)
-  createdAt      DateTime       @default(now())
-  saves          PlayerSave[]
-  ownedServers   Server[]       @relation("ServerOwner")
-  memberships    ServerMember[]
-  allowedIn      ServerFriend[] @relation("FriendUser")
+  id           String         @id @default(cuid())
+  username     String         @unique
+  email        String?        @unique
+  passwordHash String
+  isAdmin      Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  saves        PlayerSave[]
+  ownedServers Server[]       @relation("ServerOwner")
+  memberships  ServerMember[]
+  allowedIn    ServerFriend[] @relation("FriendUser")
 }
 
 model PlayerSave {
-  id             String   @id @default(cuid())
+  id                      String   @id @default(cuid())
   // Slot formats:
   //   "default"                          — legacy guest default (pre-multiplayer)
   //   "user_<userId>_server_<serverId>"  — signed-in user on a specific server
   //   "guest_<guestId>_server_<serverId>" — guest on a specific server
-  slot           String   @unique @default("default")
-  userId         String?
-  user           User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slot                    String   @unique @default("default")
+  userId                  String?
+  user                    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Scope the save to a specific server so characters aren't shared across lobbies.
-  serverId       String?
-  health         Int      @default(100)
-  level          Int      @default(1)
-  xp             Int      @default(0)
-  posX           Float    @default(0)
-  posY           Float    @default(2)
-  posZ           Float    @default(0)
-  timeOfDay      Float    @default(0.25)
-  equippedItem   String?
-  inventoryJson  String   @default("[]")
-  structuresJson String   @default("[]")
-  deaths         Int      @default(0)
-  zombiesKilled  Int      @default(0)
-  updatedAt      DateTime @updatedAt
-  createdAt      DateTime @default(now())
+  serverId                String?
+  health                  Int      @default(100)
+  level                   Int      @default(1)
+  xp                      Int      @default(0)
+  posX                    Float    @default(0)
+  posY                    Float    @default(2)
+  posZ                    Float    @default(0)
+  timeOfDay               Float    @default(0.25)
+  equippedItem            String?
+  offhandItem             String?
+  torchDurability         Float    @default(900)
+  hasReceivedStarterTorch Boolean  @default(false)
+  inventoryJson           String   @default("[]")
+  structuresJson          String   @default("[]")
+  deaths                  Int      @default(0)
+  zombiesKilled           Int      @default(0)
+  updatedAt               DateTime @updatedAt
+  createdAt               DateTime @default(now())
 
   @@index([userId])
   @@index([serverId])

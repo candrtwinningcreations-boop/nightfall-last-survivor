@@ -36,6 +36,7 @@ export interface GameState {
   offhandItem: ItemId | null
   torchDurability: number
   torchMaxDurability: number
+  hasReceivedStarterTorch: boolean
   mode: GameMode
   damageFlash: number // 0..1
   lastHitAt: number
@@ -79,6 +80,7 @@ export interface GameState {
   setEquipped: (id: ItemId | null) => void
   setOffhand: (id: ItemId | null) => void
   setTorchDurability: (seconds: number) => void
+  setHasReceivedStarterTorch: (received: boolean) => void
   damageTorchDurability: (seconds: number) => boolean
   addStructure: (s: StructureData) => void
   removeStructure: (id: string) => void
@@ -119,10 +121,12 @@ export const useGame = create<GameState>((set, get) => ({
   buildInventory: {},
   hotbarIndex: 0,
   equippedItem: null,
-  // Fresh survivors start with a lit torch in the offhand so night is survivable.
-  offhandItem: 'torch',
+  // Starter torches are granted by save/server initialization exactly once per
+  // server, not by the default store state (which is also used for respawns).
+  offhandItem: null,
   torchDurability: TORCH_MAX_DURABILITY_SEC,
   torchMaxDurability: TORCH_MAX_DURABILITY_SEC,
+  hasReceivedStarterTorch: false,
   mode: 'play',
   damageFlash: 0,
   lastHitAt: 0,
@@ -295,6 +299,7 @@ export const useGame = create<GameState>((set, get) => ({
   setTorchDurability: (seconds) => set((s) => ({
     torchDurability: Math.max(0, Math.min(s.torchMaxDurability, seconds)),
   })),
+  setHasReceivedStarterTorch: (received) => set({ hasReceivedStarterTorch: received }),
   damageTorchDurability: (seconds) => {
     const s = get()
     const next = Math.max(0, s.torchDurability - Math.max(0, seconds))
@@ -339,7 +344,7 @@ export const useGame = create<GameState>((set, get) => ({
   reset: () => set({
     health: 100, level: 1, xp: 0, timeOfDay: 0.25,
     inventory: starterInv(), buildInventory: {}, hotbarIndex: 0, equippedItem: null,
-    offhandItem: 'torch', torchDurability: TORCH_MAX_DURABILITY_SEC, torchMaxDurability: TORCH_MAX_DURABILITY_SEC, mode: 'play',
+    offhandItem: null, torchDurability: TORCH_MAX_DURABILITY_SEC, torchMaxDurability: TORCH_MAX_DURABILITY_SEC, hasReceivedStarterTorch: false, mode: 'play',
     damageFlash: 0, zombiesKilled: 0, deaths: 0, structures: [], buildSelection: 'wall',
     toast: null, craftingContext: 'normal', cosmetics: {}, credits: 0, keysGuideVisible: true,
   }),

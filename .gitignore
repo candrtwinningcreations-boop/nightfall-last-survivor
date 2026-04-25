@@ -9,3 +9,7 @@ dist/
 .DS_Store
 coverage/
 .yarn/install-state.gz
+
+
+.build/
+release/
