@@ -6,6 +6,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   stone: { id: 'stone', name: 'Stone', icon: '🪨', image: '/items/stone.png', stack: 64, description: 'Mined from boulders with a pickaxe, or picked up off the ground.', color: '#9ca3af' },
   sap: { id: 'sap', name: 'Cactus Sap', icon: '🟠', image: '/items/sap.png', stack: 64, description: 'Sticky amber-gold desert sap harvested from cactus plants. Used for beds and survival crafting.', color: '#f59e0b' },
   glowstone: { id: 'glowstone', name: 'Glowstone', icon: '💎', image: '/items/glowstone.svg', stack: 16, description: 'A luminous crystal-gem dropped by The Worm. It hums with cold desert light.', color: '#67e8f9' },
+  torch: { id: 'torch', name: 'Torch', icon: '🔥', image: '/items/torch.svg', stack: 16, offhand: 'torch', description: 'A hand torch crafted from 5 planks. Equip it in your offhand to light the dark while your main hand stays free.', color: '#fb923c' },
 
   // Stone tools
   stone_pickaxe: { id: 'stone_pickaxe', name: 'Stone Pickaxe', icon: '⛏️', image: '/items/stone_pickaxe.png', stack: 1, damage: 15, tool: 'pickaxe', tier: 1, description: 'Mines stone and raw iron. 15 damage.', color: '#a1a1aa' },
@@ -76,6 +77,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
 
 export const RECIPES: Recipe[] = [
   { id: 'wood', name: 'Chop Log into Planks', inputs: [{ id: 'log', count: 1 }], output: { id: 'wood', count: 4 } },
+  { id: 'torch', name: 'Torch', inputs: [{ id: 'wood', count: 5 }], output: { id: 'torch', count: 1 } },
 
   // Stone tier
   { id: 'stone_pickaxe', name: 'Stone Pickaxe', inputs: [{ id: 'stone', count: 3 }, { id: 'wood', count: 1 }], output: { id: 'stone_pickaxe', count: 1 } },

@@ -2,7 +2,7 @@
 
 import { useGame } from '@/lib/game/store'
 import { ITEMS, xpForNextLevel } from '@/lib/game/items'
-import { Heart, Sun, Moon, Hand, Skull } from 'lucide-react'
+import { Heart, Sun, Moon, Hand, Skull, Flame } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { ItemIcon } from './item-icon'
 
@@ -14,6 +14,7 @@ export default function Hud() {
   const inventory = useGame(s => s.inventory)
   const hotbarIndex = useGame(s => s.hotbarIndex)
   const equippedItem = useGame(s => s.equippedItem)
+  const offhandItem = useGame(s => s.offhandItem)
   const damageFlash = useGame(s => s.damageFlash)
   const toast = useGame(s => s.toast)
 
@@ -138,11 +139,11 @@ export default function Hud() {
                 className="absolute inset-y-0 left-0 bg-gradient-to-r from-cyan-700 via-cyan-300 to-white transition-all duration-150"
                 style={{ width: `${Math.max(0, Math.min(100, (boss.hp / boss.maxHp) * 100))}%` }}
               />
-              <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.20)_1px,transparent_1px)] bg-[length:33.333%_100%]" />
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.20)_1px,transparent_1px)] bg-[length:20%_100%]" />
             </div>
             <div className="flex items-center justify-between mt-1 text-[10px] font-mono">
-              <span className="text-cyan-100">Red circle = move. Hit the exposed mouth, then stab 3 times.</span>
-              <span className="text-cyan-50">{Math.max(0, Math.ceil(boss.hp))}/{Math.round(boss.maxHp)} hits</span>
+              <span className="text-cyan-100">Red circle = move. Hit mouth to expose it. Fists 5 hits · pickaxe 3 · axe/sword 2.</span>
+              <span className="text-cyan-50">{Math.max(0, Math.ceil(boss.hp))}/{Math.round(boss.maxHp)} HP</span>
             </div>
           </div>
         </div>
@@ -264,7 +265,14 @@ export default function Hud() {
       </div>
 
       {/* Bottom-right: Equipped */}
-      <div className="absolute bottom-4 right-4 pointer-events-auto">
+      <div className="absolute bottom-4 right-4 pointer-events-auto flex items-end gap-2">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 backdrop-blur-sm border border-orange-500/20 text-white">
+          {offhandItem ? <ItemIcon id={offhandItem} size={30} /> : <Flame className="w-4 h-4 text-zinc-500" />}
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500">Offhand</span>
+            <span className="text-xs font-semibold leading-none">{offhandItem ? ITEMS[offhandItem]?.name : 'Empty'}</span>
+          </div>
+        </div>
         <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-black/60 backdrop-blur-sm border border-white/10 text-white">
           {equippedItem ? (
             <>
@@ -272,7 +280,7 @@ export default function Hud() {
               <div className="flex flex-col">
                 <span className="text-sm font-semibold leading-none">{ITEMS[equippedItem]?.name}</span>
                 <span className="text-[10px] uppercase tracking-widest text-zinc-400">
-                  {ITEMS[equippedItem]?.damage ?? 5} damage
+                  {ITEMS[equippedItem]?.damage ? `${ITEMS[equippedItem]?.damage} damage` : 'utility item'}
                 </span>
               </div>
             </>

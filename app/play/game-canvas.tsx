@@ -41,14 +41,14 @@ const GOBLIN_HEALTH = 28
 const GOBLIN_ATTACK_RANGE = 1.1
 const MAX_GOBLINS = 1
 // The Worm: desert day boss. It burrows under sand, telegraphs a lethal
-// mouth eruption, then can be forced above ground and killed with 3 stabs.
+// mouth eruption, then can be forced above ground and killed with real weapons.
 const WORM_SPEED = 2.65
-const WORM_HEALTH = 3
+const WORM_HEALTH = 700
 const WORM_WARNING_RADIUS = 1.75
 const WORM_LETHAL_RADIUS = 1.2
 const WORM_TRIGGER_RANGE = 12
 const MAX_WORMS = 1
-// Huge green orc: roaming boss with weak spots, knockdowns, club attacks,
+// ORC: cave-tethered daytime boss with weak spots, knockdowns, club attacks,
 // and a close-range grab/throw move.
 const ORC_SPEED = 2.45
 const ORC_HEALTH = 520
@@ -57,6 +57,8 @@ const ORC_ATTACK_RANGE = 2.9
 const ORC_GRAB_RANGE = 1.75
 const ORC_GRAB_DAMAGE = 30
 const ORC_GRAB_COOLDOWN = 30
+const ORC_LEASH_RADIUS = 22
+const ORC_RETURN_RADIUS = 18
 const MAX_ORCS = 1
 
 type Biome = 'forest' | 'plains' | 'desert'
@@ -202,6 +204,7 @@ type WormBoss = {
   mound: THREE.Group
   body: THREE.Group
   mouth: THREE.Group
+  fins: THREE.Object3D[]
   warning: THREE.Mesh
   light: THREE.PointLight
 }
@@ -230,6 +233,8 @@ type OrcBoss = {
   legL: THREE.Object3D
   legR: THREE.Object3D
   club: THREE.Object3D
+  home: THREE.Vector3
+  leashRadius: number
 }
 
 type StructureMesh = {
@@ -449,6 +454,8 @@ export default function GameCanvas() {
     const caveFloorGeo = new THREE.CircleGeometry(1, 40)
     const caveMouthGeo = new THREE.CircleGeometry(1, 32)
     const caveCrystalGeo = new THREE.ConeGeometry(0.08, 0.42, 6)
+    const caveSpikeGeo = new THREE.ConeGeometry(0.18, 1, 8)
+    const caveRibGeo = new THREE.TorusGeometry(1, 0.08, 8, 18, Math.PI)
     const bedGhostGeo = new THREE.BoxGeometry(1.8, 0.55, 2.4)
     const wallGeo = new THREE.BoxGeometry(2, 2.4, 0.2)
     const floorGeo = new THREE.BoxGeometry(2, 0.15, 2)
@@ -731,6 +738,26 @@ export default function GameCanvas() {
         mouth.position.set(0, 1.15, -caveSpec.radius * 0.42)
         cave.add(mouth)
 
+        // Walkable cave interior: a dark tunnel floor continues behind the
+        // entrance, while all detail stays along the sides/ceiling so the
+        // player can physically walk inside rather than hitting a facade.
+        const innerFloor = new THREE.Mesh(caveFloorGeo, caveFloorMat)
+        innerFloor.rotation.x = -Math.PI / 2
+        innerFloor.scale.set(caveSpec.radius * 0.72, caveSpec.radius * 1.12, 1)
+        innerFloor.position.set(0, 0.02, -caveSpec.radius * 0.82)
+        innerFloor.receiveShadow = true
+        cave.add(innerFloor)
+
+        for (let arch = 0; arch < 4; arch++) {
+          const rib = new THREE.Mesh(caveRibGeo, caveRockMat)
+          rib.position.set(0, 0.88 + arch * 0.08, -caveSpec.radius * (0.28 + arch * 0.28))
+          rib.rotation.set(0, 0, Math.PI)
+          rib.scale.set(caveSpec.radius * (0.56 - arch * 0.045), caveSpec.radius * (0.36 - arch * 0.025), 0.9)
+          rib.castShadow = true
+          rib.receiveShadow = true
+          cave.add(rib)
+        }
+
         for (let r = 0; r < 12; r++) {
           const a = Math.PI * (0.05 + (r / 11) * 0.9)
           const sx = Math.cos(a) * caveSpec.radius * (0.88 + rand(r + 404, r + 1) * 0.18)
@@ -745,17 +772,42 @@ export default function GameCanvas() {
           cave.add(rock)
         }
 
-        for (let k = 0; k < 5; k++) {
+        for (let sidx = 0; sidx < 18; sidx++) {
+          const side = sidx % 2 === 0 ? -1 : 1
+          const depth = -caveSpec.radius * (0.2 + rand(sidx + 140, sidx + 31) * 1.15)
+          const sideOffset = side * caveSpec.radius * (0.44 + rand(sidx + 44, sidx + 81) * 0.28)
+          const spike = new THREE.Mesh(caveSpikeGeo, caveRockMat)
+          const h = 0.45 + rand(sidx + 17, sidx + 33) * 1.05
+          spike.scale.setScalar(h)
+          spike.position.set(sideOffset, 0.05 + h * 0.38, depth)
+          spike.rotation.z = (rand(sidx + 4, sidx + 5) - 0.5) * 0.34
+          spike.castShadow = true
+          cave.add(spike)
+          if (sidx < 12) {
+            const hang = new THREE.Mesh(caveSpikeGeo, caveRockMat)
+            const hh = 0.32 + rand(sidx + 71, sidx + 93) * 0.75
+            hang.scale.setScalar(hh)
+            hang.position.set(sideOffset * 0.65, 1.85 + rand(sidx + 9, sidx + 10) * 0.35, depth - 0.15)
+            hang.rotation.z = Math.PI + (rand(sidx + 11, sidx + 12) - 0.5) * 0.35
+            hang.castShadow = true
+            cave.add(hang)
+          }
+        }
+
+        for (let k = 0; k < 7; k++) {
           const crystal = new THREE.Mesh(caveCrystalGeo, caveCrystalMat)
           const side = k % 2 === 0 ? -1 : 1
-          crystal.position.set(side * (1.15 + rand(k + 500, k) * 1.15), 0.25, -1.4 - rand(k + 55, k + 4) * 1.1)
+          crystal.position.set(side * (1.15 + rand(k + 500, k) * 1.15), 0.25, -1.4 - rand(k + 55, k + 4) * 1.5)
           crystal.rotation.z = (rand(k + 6, k + 7) - 0.5) * 0.5
           cave.add(crystal)
         }
 
-        const glow = new THREE.PointLight(0x3b82f6, 0.85, caveSpec.radius * 2.7, 2)
-        glow.position.set(0, 0.7, -caveSpec.radius * 0.25)
+        const glow = new THREE.PointLight(0x1e3a8a, 0.28, caveSpec.radius * 2.0, 2.4)
+        glow.position.set(0, 0.45, -caveSpec.radius * 0.72)
         cave.add(glow)
+        const entranceMist = new THREE.PointLight(0x0f172a, 0.55, caveSpec.radius * 1.4, 2.8)
+        entranceMist.position.set(0, 0.22, -caveSpec.radius * 0.28)
+        cave.add(entranceMist)
         cave.position.set(caveSpec.x, caveSpec.y + 0.015, caveSpec.z)
         cave.rotation.y = caveSpec.yaw
         group.add(cave)
@@ -887,7 +939,7 @@ export default function GameCanvas() {
       c.terrain.geometry.dispose()
     }
 
-    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, glowstoneCoreGeo, glowstoneShardGeo, caveFloorGeo, caveMouthGeo, caveCrystalGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
+    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, glowstoneCoreGeo, glowstoneShardGeo, caveFloorGeo, caveMouthGeo, caveCrystalGeo, caveSpikeGeo, caveRibGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
 
     function updateChunks(px: number, pz: number) {
       const pcx = Math.floor(px / CHUNK_SIZE)
@@ -1374,6 +1426,42 @@ export default function GameCanvas() {
     heldHolyWaterGroup.visible = false
     weaponGroup.add(heldHolyWaterGroup)
 
+    function buildHeldTorchGroup() {
+      const g = new THREE.Group()
+      const wood = new THREE.MeshStandardMaterial({ color: 0x6b3b17, roughness: 0.9, metalness: 0 })
+      const char = new THREE.MeshStandardMaterial({ color: 0x1f1309, roughness: 1, metalness: 0 })
+      const flameOuter = new THREE.MeshBasicMaterial({ color: 0xff7a18, transparent: true, opacity: 0.92 })
+      const flameInner = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.95 })
+      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.72, 10), wood)
+      handle.position.y = -0.2
+      handle.rotation.z = 0.12
+      handle.castShadow = true
+      g.add(handle)
+      const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.16, 10), char)
+      wrap.position.y = 0.18
+      wrap.castShadow = true
+      g.add(wrap)
+      const fire = new THREE.Group()
+      fire.position.y = 0.36
+      const outer = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.34, 10), flameOuter)
+      outer.position.y = 0.08
+      fire.add(outer)
+      const inner = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.22, 10), flameInner)
+      inner.position.y = 0.06
+      fire.add(inner)
+      const glow = new THREE.PointLight(0xff8a28, 0.8, 4, 2)
+      glow.position.y = 0.22
+      fire.add(glow)
+      ;(g as any).__flame = fire
+      ;(g as any).__glow = glow
+      g.add(fire)
+      return g
+    }
+
+    const heldTorchGroup = buildHeldTorchGroup()
+    heldTorchGroup.visible = false
+    weaponGroup.add(heldTorchGroup)
+
     // First-person: weapon is a child of the camera so it moves with the view.
     // Alias for legacy references in animation code
     const weaponMesh = weaponGroup
@@ -1569,6 +1657,15 @@ export default function GameCanvas() {
     handGroup.add(thumbNail)
 
     camera.add(fistGroup)
+
+    // Offhand torch: separate left-hand view model so the main hand can still
+    // swing a weapon/tool while the light source is equipped.
+    const offhandTorchGroup = buildHeldTorchGroup()
+    offhandTorchGroup.position.set(-0.46, -0.34, -0.72)
+    offhandTorchGroup.rotation.set(0.4, 0.2, 0.22)
+    offhandTorchGroup.scale.setScalar(1.15)
+    offhandTorchGroup.visible = false
+    camera.add(offhandTorchGroup)
 
     // Building ghost
     let buildGhost: THREE.Mesh | null = null
@@ -2150,12 +2247,41 @@ export default function GameCanvas() {
       g.add(mound)
 
       const body = new THREE.Group()
-      for (let i = 0; i < 7; i++) {
-        const seg = new THREE.Mesh(new THREE.SphereGeometry(0.45 - i * 0.025, 18, 12), i % 2 ? bellyMat : hideMat)
-        seg.scale.set(1.0, 0.72, 0.82)
-        seg.position.set(0, 0.42, -i * 0.48)
+      const fins: THREE.Object3D[] = []
+      const spineMat = new THREE.MeshStandardMaterial({ color: 0x3b160d, roughness: 0.9, metalness: 0 })
+      for (let i = 0; i < 12; i++) {
+        const taper = 1 - i / 18
+        const seg = new THREE.Mesh(new THREE.SphereGeometry(0.56 * taper, 28, 18), i % 2 ? bellyMat : hideMat)
+        seg.scale.set(1.12, 0.78, 0.9)
+        seg.position.set(Math.sin(i * 0.55) * 0.035, 0.42 - i * 0.004, -i * 0.42)
         seg.castShadow = true
         body.add(seg)
+        // Overlapping armored plates make the body read as segmented instead
+        // of one smooth tube, and catch light as the worm leaps out of sand.
+        const plate = new THREE.Mesh(new THREE.TorusGeometry(0.42 * taper, 0.022, 6, 18), spineMat)
+        plate.scale.set(1.22, 0.34, 0.72)
+        plate.rotation.x = Math.PI / 2
+        plate.position.set(0, 0.43, -i * 0.42 + 0.015)
+        plate.castShadow = true
+        body.add(plate)
+        const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.085 * taper, 0.38 * taper, 6), spineMat)
+        dorsal.position.set(0, 0.92 - i * 0.014, -i * 0.42)
+        dorsal.rotation.x = -0.25
+        dorsal.userData.baseRotX = dorsal.rotation.x
+        dorsal.castShadow = true
+        fins.push(dorsal)
+        body.add(dorsal)
+        if (i < 9) {
+          for (const side of [-1, 1]) {
+            const fin = new THREE.Mesh(new THREE.ConeGeometry(0.06 * taper, 0.29 * taper, 5), spineMat)
+            fin.position.set(side * (0.46 - i * 0.018), 0.52, -i * 0.42 + 0.04)
+            fin.rotation.set(0.2, 0, side * Math.PI / 2)
+            fin.userData.baseRotX = fin.rotation.x
+            fin.castShadow = true
+            fins.push(fin)
+            body.add(fin)
+          }
+        }
       }
       body.visible = false
       g.add(body)
@@ -2171,12 +2297,19 @@ export default function GameCanvas() {
       rim.position.z = 0.38
       rim.castShadow = true
       mouth.add(rim)
-      for (let i = 0; i < 16; i++) {
-        const a = (i / 16) * Math.PI * 2
-        const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.18, 6), toothMat)
+      for (let i = 0; i < 32; i++) {
+        const a = (i / 32) * Math.PI * 2
+        const tooth = new THREE.Mesh(new THREE.ConeGeometry(i % 2 ? 0.028 : 0.04, i % 2 ? 0.14 : 0.22, 6), toothMat)
         tooth.position.set(Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0.43)
         tooth.rotation.set(Math.PI / 2, 0, -a)
         mouth.add(tooth)
+      }
+      for (const side of [-1, 1]) {
+        const mandible = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.58, 7), spineMat)
+        mandible.position.set(side * 0.46, 0.04, 0.55)
+        mandible.rotation.set(Math.PI / 2, 0, side * 0.42)
+        mandible.castShadow = true
+        mouth.add(mandible)
       }
       mouth.visible = false
       g.add(mouth)
@@ -2211,6 +2344,7 @@ export default function GameCanvas() {
         mound,
         body,
         mouth,
+        fins,
         warning,
         light,
       }
@@ -2250,25 +2384,41 @@ export default function GameCanvas() {
     function forceWormEmerge(w: WormBoss) {
       if (w.state === 'emerged' || w.state === 'dying') return
       w.state = 'emerged'
-      w.stateTimer = 0
+      w.stateTimer = 0.9
       w.hp = Math.max(1, w.hp)
       w.warning.visible = false
       w.mound.visible = false
       w.body.visible = true
       w.mouth.visible = true
       w.light.intensity = 1.6
-      w.mesh.position.y = heightAt(w.pos.x, w.pos.z)
-      useGame.getState().showToast('🪱 The Worm bursts from the sand — stab it 3 times!')
+      w.mesh.position.y = heightAt(w.pos.x, w.pos.z) + 1.0
+      w.vel.y = 7
+      useGame.getState().showToast('🪱 The Worm launches from the sand — use swords or axes!')
     }
 
-    function damageWorm(w: WormBoss) {
+    function wormWeaponDamage(eq: ItemId | null, _baseDamage: number) {
+      const tool = eq ? ITEMS[eq]?.tool : undefined
+      // Boss-specific hit requirements over 700 HP:
+      // fists = 5 hits, pickaxe = 3 hits, axe/sword = 2 hits.
+      if (!eq) return WORM_HEALTH / 5
+      if (tool === 'pickaxe') return WORM_HEALTH / 3
+      if (tool === 'axe' || tool === 'sword') return WORM_HEALTH / 2
+      return 0
+    }
+
+    function damageWorm(w: WormBoss, eq: ItemId | null, baseDamage: number) {
       if (w.state === 'dying') return
       if (w.state === 'mouth') {
         forceWormEmerge(w)
         return
       }
       if (w.state !== 'emerged') return
-      w.hp -= 1
+      const amount = wormWeaponDamage(eq, baseDamage)
+      if (amount <= 0) {
+        useGame.getState().showToast('🪱 The Worm shrugs that off — strike with fists, pickaxe, axe, or sword!')
+        return
+      }
+      w.hp -= amount
       w.hurtTimer = 0.25
       if (w.hp <= 0) {
         w.state = 'dying'
@@ -2277,14 +2427,15 @@ export default function GameCanvas() {
         w.warning.visible = false
         useGame.getState().showToast('💎 The Worm curls up and dies! Glowstone dropped.')
       } else {
-        useGame.getState().showToast(`🪱 Worm stabbed! ${w.hp} hit${w.hp === 1 ? '' : 's'} left.`)
+        const hitsLeft = Math.ceil(w.hp / Math.max(1, amount))
+        useGame.getState().showToast(`🪱 Worm hit for ${amount}! ~${hitsLeft} good hit${hitsLeft === 1 ? '' : 's'} left.`)
       }
     }
 
-    // --- Huge Green Orc Boss ---
+    // --- ORC Boss ---
     const orcs: OrcBoss[] = []
 
-    function createOrc(x: number, y: number, z: number, id = makeNetId('o')): OrcBoss {
+    function createOrc(x: number, y: number, z: number, id = makeNetId('o'), homeX = x, homeZ = z, leashRadius = ORC_LEASH_RADIUS): OrcBoss {
       const g = new THREE.Group()
       const skinMat = new THREE.MeshStandardMaterial({ color: 0x2f8f34, roughness: 0.82, metalness: 0 })
       const darkSkinMat = new THREE.MeshStandardMaterial({ color: 0x1f6126, roughness: 0.95, metalness: 0 })
@@ -2402,6 +2553,8 @@ export default function GameCanvas() {
         legL: legLGroup,
         legR: legRGroup,
         club: clubGroup,
+        home: new THREE.Vector3(homeX, heightAt(homeX, homeZ), homeZ),
+        leashRadius,
       }
     }
 
@@ -2472,19 +2625,19 @@ export default function GameCanvas() {
     }
 
     function spawnOrc(id = makeNetId('o'), announce = true, sx?: number, sz?: number) {
-      if (!isNightTimeValue(timeOfDayAcc)) return false
+      if (!isDayTimeValue(timeOfDayAcc)) return false
       if (orcs.some(o => o.id === id) || orcs.length >= MAX_ORCS) return false
-      const cave = typeof sx === 'number' && typeof sz === 'number' ? caveSpecNear(sx, sz, 1.2) : findLoadedCaveForOrc()
+      const cave = typeof sx === 'number' && typeof sz === 'number' ? caveSpecNear(sx, sz, ORC_LEASH_RADIUS) : findLoadedCaveForOrc()
       if (!cave) return false
       const inwardX = Math.sin(cave.yaw) * cave.radius * 0.25
       const inwardZ = Math.cos(cave.yaw) * cave.radius * 0.25
       const x = sx ?? (cave.x + inwardX)
       const z = sz ?? (cave.z + inwardZ)
-      if (!caveSpecNear(x, z, 1.2)) return false
+      if (Math.hypot(x - cave.x, z - cave.z) > ORC_LEASH_RADIUS) return false
       const y = heightAt(x, z)
-      orcs.push(createOrc(x, y, z, id))
+      orcs.push(createOrc(x, y, z, id, cave.x, cave.z, ORC_LEASH_RADIUS))
       if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'orc', x, y, z })
-      useGame.getState().showToast('👹 A huge green orc boss roars from a cave!')
+      useGame.getState().showToast('👹 An ORC roars from a cave! Stay outside its tether!')
       return true
     }
 
@@ -2495,7 +2648,7 @@ export default function GameCanvas() {
       o.vel.set(0, 0, 0)
       o.mesh.rotation.z = 1.22
       o.mesh.position.y = o.pos.y + 0.35
-      useGame.getState().showToast(`💥 Orc ${reason} hit! It crashes down — strike now!`)
+      useGame.getState().showToast(`💥 ORC ${reason} hit! It crashes down — strike now!`)
     }
 
     function damageOrc(o: OrcBoss, amount: number, weak = false) {
@@ -2508,7 +2661,7 @@ export default function GameCanvas() {
         o.state = 'dying'
         o.stateTimer = 2.1
         o.vel.set(0, 0, 0)
-        useGame.getState().showToast('👑 The huge orc boss is falling!')
+        useGame.getState().showToast('👑 ORC is falling!')
       }
     }
 
@@ -3372,6 +3525,14 @@ export default function GameCanvas() {
         ;(group as any).__glowstoneLight = glow
         ;(group as any).__glowstoneCore = core
         group.add(glow)
+      } else if (id === 'torch') {
+        const torch = buildHeldTorchGroup()
+        torch.scale.setScalar(0.9)
+        torch.rotation.set(0.15, 0, -0.45)
+        torch.position.y = 0.25
+        ;(group as any).__torchFlame = (torch as any).__flame
+        ;(group as any).__torchLight = (torch as any).__glow
+        group.add(torch)
       } else {
         const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(def.color) })
         const cube = new THREE.Mesh(dropGeo, mat)
@@ -3609,13 +3770,11 @@ export default function GameCanvas() {
     }
 
     function clearDaytimeHostiles() {
-      // Daylight clears night-only threats. Day predators (forest goblins and
-      // desert worms) remain active until nightfall or until they despawn.
+      // Daylight clears night-only threats. Day predators (forest goblins,
+      // cave-tethered ORCs, and desert worms) remain active until nightfall.
       clearZombies()
       for (const v of vampires) removeVampire(v)
       vampires.length = 0
-      for (const o of orcs) removeOrc(o)
-      orcs.length = 0
       ;(window as any).__nightfall_nearestEnemy = null
       ;(window as any).__nightfall_boss = null
     }
@@ -3625,6 +3784,8 @@ export default function GameCanvas() {
       goblins.length = 0
       for (const w of worms) removeWorm(w)
       worms.length = 0
+      for (const o of orcs) removeOrc(o)
+      orcs.length = 0
       ;(window as any).__nightfall_nearestEnemy = null
       ;(window as any).__nightfall_boss = null
     }
@@ -3680,7 +3841,7 @@ export default function GameCanvas() {
     let wasNight = isNightTimeValue(timeOfDayAcc)
     let zombieSpawnTimer = 3
     let vampireSpawnTimer = 30
-    // Orc boss is rare, but guaranteed to appear after the world has been alive a while.
+    // ORC is a rare daytime cave guardian, tethered to its cave entrance.
     let orcSpawnTimer = 140 + Math.random() * 90
     // Goblin first sighting happens a few minutes in; respawns are even rarer.
     let goblinSpawnTimer = 180 + Math.random() * 120
@@ -3912,9 +4073,16 @@ export default function GameCanvas() {
         ring++
         dropped += n
       }
+      if (state.offhandItem) {
+        const a = ring * 1.17
+        const r = 0.45 + (ring % 5) * 0.16
+        dropItemToWorld(state.offhandItem, 1, playerPos.x + Math.cos(a) * r, heightAt(playerPos.x, playerPos.z) + 0.55, playerPos.z + Math.sin(a) * r)
+        dropped += 1
+      }
       state.setInventory(Array.from({ length: 30 }, () => ({ id: null, count: 0 })))
       state.setBuildInventory({})
       state.setEquipped(null)
+      state.setOffhand(null)
       state.showToast(dropped > 0 ? `💀 ${reason} You dropped ${dropped} items!` : `💀 ${reason}`)
     }
 
@@ -4145,10 +4313,14 @@ export default function GameCanvas() {
         }
       }
 
-      // Player torch during night
-      if (isNightNow) {
-        playerTorch.intensity = 1.2
-        playerTorch.position.set(playerPos.x, playerPos.y + 0.5, playerPos.z)
+      // Player/offhand light. A crafted torch in the offhand provides the real
+      // close-range light while leaving the main hand free to attack.
+      const hasOffhandTorch = useGame.getState().offhandItem === 'torch'
+      if (hasOffhandTorch || isNightNow) {
+        const flicker = Math.sin(performance.now() * 0.012) * 0.18 + Math.sin(performance.now() * 0.031) * 0.08
+        playerTorch.intensity = hasOffhandTorch ? 2.15 + flicker : 0.45
+        playerTorch.distance = hasOffhandTorch ? 20 : 9
+        playerTorch.position.set(playerPos.x, playerPos.y + 0.25, playerPos.z)
       } else {
         playerTorch.intensity = 0
       }
@@ -4394,8 +4566,19 @@ export default function GameCanvas() {
 
         // Weapon view model (on character's right hand)
         const eq = state.equippedItem
+        const offhandEq = state.offhandItem
         const hasWeapon = !!eq
         weaponGroup.visible = hasWeapon
+        offhandTorchGroup.visible = offhandEq === 'torch'
+        if (offhandTorchGroup.visible) {
+          const flame = (offhandTorchGroup as any).__flame as THREE.Group | undefined
+          const glow = (offhandTorchGroup as any).__glow as THREE.PointLight | undefined
+          if (flame) {
+            flame.scale.setScalar(0.95 + Math.sin(performance.now() * 0.012) * 0.08)
+            flame.rotation.z = Math.sin(performance.now() * 0.009) * 0.08
+          }
+          if (glow) glow.intensity = 0.85 + Math.sin(performance.now() * 0.014) * 0.2
+        }
         // Show the fist only when unarmed. The fist swings with its own arc
         // (parallel to the weapon's) so the player SEES a punch happen.
         fistGroup.visible = !hasWeapon
@@ -4426,6 +4609,8 @@ export default function GameCanvas() {
           heldHatGroup.visible = false
           heldCloakMesh.visible = false
           heldHolyWaterGroup.visible = false
+          heldTorchGroup.visible = false
+          heldGlowstoneGroup.visible = false
 
           if (eq === 'stone_pickaxe' || eq === 'iron_pickaxe') {
             // Wooden handle + grip + two-pointed pickaxe head
@@ -4494,6 +4679,12 @@ export default function GameCanvas() {
             heldCloakMesh.visible = true
           } else if (eq === 'holy_water') {
             heldHolyWaterGroup.visible = true
+          } else if (eq === 'torch') {
+            heldTorchGroup.visible = true
+            const flame = (heldTorchGroup as any).__flame as THREE.Group | undefined
+            const glow = (heldTorchGroup as any).__glow as THREE.PointLight | undefined
+            if (flame) flame.scale.setScalar(0.9 + Math.sin(performance.now() * 0.012) * 0.08)
+            if (glow) glow.intensity = 0.65 + Math.sin(performance.now() * 0.014) * 0.18
           } else {
             // Fallback: generic club (plain handle + weaponHead)
             handleMesh.visible = true
@@ -4782,9 +4973,9 @@ export default function GameCanvas() {
           }
         }
 
-        // --- Huge Orc boss spawning & AI ---
-        if (isNightNow && isWorldAuthority) orcSpawnTimer -= dt
-        if (isNightNow && isWorldAuthority && orcSpawnTimer <= 0) {
+        // --- ORC cave guardian spawning & AI ---
+        if (!isNightNow && isWorldAuthority) orcSpawnTimer -= dt
+        if (!isNightNow && isWorldAuthority && orcSpawnTimer <= 0) {
           const spawned = spawnOrc()
           // If the player has not discovered/loaded a cave yet, try again soon
           // instead of forcing a surface spawn.
@@ -4792,10 +4983,19 @@ export default function GameCanvas() {
         }
         for (let i = orcs.length - 1; i >= 0; i--) {
           const o = orcs[i]
-          const toPlayer = new THREE.Vector3().subVectors(playerPos, o.pos)
-          toPlayer.y = 0
-          const dist = toPlayer.length()
+          if (isNightNow) {
+            removeOrc(o)
+            orcs.splice(i, 1)
+            continue
+          }
+          const toPlayerRaw = new THREE.Vector3().subVectors(playerPos, o.pos)
+          toPlayerRaw.y = 0
+          const dist = toPlayerRaw.length()
+          const toPlayer = toPlayerRaw.clone()
           if (dist > 0.001) toPlayer.normalize()
+          const distFromHome = Math.hypot(o.pos.x - o.home.x, o.pos.z - o.home.z)
+          const playerDistFromHome = Math.hypot(playerPos.x - o.home.x, playerPos.z - o.home.z)
+          const playerInsideLeash = playerDistFromHome <= o.leashRadius
 
           o.attackTimer -= dt
           o.grabCooldown -= dt
@@ -4814,7 +5014,7 @@ export default function GameCanvas() {
               orcs.splice(i, 1)
               state.addXp(350)
               state.addZombieKill()
-              state.showToast('👑 Huge Orc defeated! +350 XP')
+              state.showToast('👑 ORC defeated! +350 XP')
               dropItemToWorld('wood', 10, px, py + 0.7, pz)
               dropItemToWorld('raw_iron', 4, px + 0.5, py + 0.7, pz)
             }
@@ -4855,21 +5055,37 @@ export default function GameCanvas() {
             if (o.stateTimer <= 0) o.state = 'walking'
           } else {
             const ORC_STANDOFF = 2.15
-            const speedScale = dist > ORC_STANDOFF ? 1 : Math.max(0, (dist - 1.55) / 0.6)
-            o.vel.x = toPlayer.x * ORC_SPEED * speedScale
-            o.vel.z = toPlayer.z * ORC_SPEED * speedScale
+            const toHome = new THREE.Vector3(o.home.x - o.pos.x, 0, o.home.z - o.pos.z)
+            const homeDist = toHome.length()
+            if (homeDist > 0.001) toHome.normalize()
+            const returningHome = !playerInsideLeash || distFromHome > ORC_RETURN_RADIUS
+            const moveDir = returningHome ? toHome : toPlayer
+            const targetDist = returningHome ? homeDist : dist
+            const speedScale = returningHome ? 1 : (targetDist > ORC_STANDOFF ? 1 : Math.max(0, (targetDist - 1.55) / 0.6))
+            o.vel.x = moveDir.x * ORC_SPEED * speedScale
+            o.vel.z = moveDir.z * ORC_SPEED * speedScale
             o.pos.x += o.vel.x * dt
             o.pos.z += o.vel.z * dt
             collideEnemy(o.pos, 0.95)
+            const leashDx = o.pos.x - o.home.x
+            const leashDz = o.pos.z - o.home.z
+            const leashD = Math.hypot(leashDx, leashDz)
+            if (leashD > o.leashRadius) {
+              const k = o.leashRadius / leashD
+              o.pos.x = o.home.x + leashDx * k
+              o.pos.z = o.home.z + leashDz * k
+              o.vel.set(0, 0, 0)
+            }
             const od = Math.sqrt((playerPos.x - o.pos.x) ** 2 + (playerPos.z - o.pos.z) ** 2)
-            if (od < ORC_STANDOFF && od > 0.001) {
+            if (!returningHome && od < ORC_STANDOFF && od > 0.001) {
               const k = ORC_STANDOFF / od
               o.pos.x = playerPos.x - (playerPos.x - o.pos.x) * k
               o.pos.z = playerPos.z - (playerPos.z - o.pos.z) * k
             }
             o.pos.y = heightAt(o.pos.x, o.pos.z)
             o.mesh.position.copy(o.pos)
-            o.mesh.rotation.y = Math.atan2(playerPos.x - o.pos.x, playerPos.z - o.pos.z)
+            const faceTarget = returningHome ? o.home : playerPos
+            o.mesh.rotation.y = Math.atan2(faceTarget.x - o.pos.x, faceTarget.z - o.pos.z)
 
             const spd = Math.sqrt(o.vel.x * o.vel.x + o.vel.z * o.vel.z)
             if (spd > 0.05) o.walkPhase += spd * dt * 1.9
@@ -4884,7 +5100,7 @@ export default function GameCanvas() {
             o.head.rotation.y = Math.sin(o.walkPhase * 0.5) * 0.07
             o.jaw.rotation.x = 0.04
 
-            if (dist < ORC_GRAB_RANGE && o.grabCooldown <= 0) {
+            if (playerInsideLeash && dist < ORC_GRAB_RANGE && o.grabCooldown <= 0) {
               o.grabCooldown = ORC_GRAB_COOLDOWN
               o.attackTimer = 1.6
               state.takeDamage(ORC_GRAB_DAMAGE)
@@ -4897,13 +5113,13 @@ export default function GameCanvas() {
               playerVel.y = Math.max(playerVel.y, 8)
               o.state = 'roaring'
               o.stateTimer = 1.05
-              state.showToast('👹 The orc grabs and throws you! -30 HP')
-            } else if (dist < ORC_ATTACK_RANGE && o.attackTimer <= 0) {
+              state.showToast('👹 ORC grabs and throws you! -30 HP')
+            } else if (playerInsideLeash && dist < ORC_ATTACK_RANGE && o.attackTimer <= 0) {
               o.attackTimer = 2.0
               state.takeDamage(ORC_CLUB_DAMAGE)
               o.armR.rotation.x = -2.2
               o.club.rotation.x = -0.8
-              state.showToast('🪵 Orc club smash!')
+              state.showToast('🪵 ORC club smash!')
             }
           }
 
@@ -4932,7 +5148,7 @@ export default function GameCanvas() {
         // --- The Worm spawning & AI ---
         // Desert-only daytime predator: burrows as a sand mound, paints a red
         // danger circle, erupts with an instant-kill mouth, then can be baited
-        // above ground and killed with exactly three stabs.
+        // above ground and killed with sword/axe boss damage.
         const playerInDesert = biomeAt(playerPos.x, playerPos.z) === 'desert'
         if (!isNightNow && playerInDesert && isWorldAuthority) wormSpawnTimer -= dt
         if (!isNightNow && playerInDesert && isWorldAuthority && wormSpawnTimer <= 0) {
@@ -4962,6 +5178,7 @@ export default function GameCanvas() {
             w.body.visible = true
             w.mound.visible = false
             w.mesh.rotation.z = Math.sin(p * Math.PI * 1.3) * 1.05
+            w.mesh.rotation.x = -Math.sin(p * Math.PI) * 0.5
             w.mesh.scale.setScalar(Math.max(0.05, 1 - p * 0.85))
             w.mesh.position.y = w.pos.y + Math.sin(p * Math.PI) * 0.28
             w.light.intensity = Math.max(0, 1.6 * (1 - p))
@@ -5023,7 +5240,11 @@ export default function GameCanvas() {
             ;(w.warning.material as THREE.MeshBasicMaterial).opacity = 0.72
             w.mouth.visible = true
             w.mouth.scale.setScalar(1 + Math.sin(performance.now() * 0.02) * 0.08)
-            w.mesh.position.set(w.pos.x, heightAt(w.pos.x, w.pos.z) + Math.sin(Math.max(0, w.stateTimer) * 8) * 0.025, w.pos.z)
+            const mouthProgress = 1 - Math.max(0, w.stateTimer / 1.35)
+            const mouthArc = Math.sin(Math.max(0, Math.min(1, mouthProgress)) * Math.PI)
+            w.mesh.position.set(w.pos.x, heightAt(w.pos.x, w.pos.z) + mouthArc * 1.25, w.pos.z)
+            w.mesh.rotation.x = -mouthArc * 0.28
+            w.light.intensity = 1.35 + mouthArc * 1.25
             const px = playerPos.x - w.pos.x
             const pz = playerPos.z - w.pos.z
             if (px * px + pz * pz < WORM_LETHAL_RADIUS * WORM_LETHAL_RADIUS && useGame.getState().mode !== 'dead') {
@@ -5036,6 +5257,7 @@ export default function GameCanvas() {
               w.mouth.visible = false
               w.mound.visible = true
               w.light.intensity = 0
+              w.mesh.rotation.x = 0
             }
           } else if (w.state === 'emerged') {
             w.warning.visible = false
@@ -5048,12 +5270,22 @@ export default function GameCanvas() {
             w.vel.z = toPlayer.z * WORM_SPEED * 0.72 * speedScale
             w.pos.x += w.vel.x * dt
             w.pos.z += w.vel.z * dt
-            w.pos.y = heightAt(w.pos.x, w.pos.z)
+            const groundY = heightAt(w.pos.x, w.pos.z)
+            if (w.stateTimer <= 0 && dist > STANDOFF + 0.25 && speedScale > 0.4) {
+              w.vel.y = 6.4
+              w.stateTimer = 1.15
+            }
+            w.vel.y -= GRAVITY * 0.86 * dt
+            w.pos.y = Math.max(groundY, w.pos.y + w.vel.y * dt)
+            if (w.pos.y <= groundY + 0.001 && w.vel.y < 0) w.vel.y = 0
             collideEnemy(w.pos, 0.65)
-            w.mesh.position.copy(w.pos)
+            const jumpArc = Math.max(0, w.pos.y - groundY)
+            w.mesh.position.set(w.pos.x, w.pos.y, w.pos.z)
             w.mesh.rotation.y = Math.atan2(playerPos.x - w.pos.x, playerPos.z - w.pos.z)
-            w.body.rotation.x = Math.sin(w.crawlPhase) * 0.09
-            w.mouth.rotation.x = Math.sin(w.crawlPhase * 1.3) * 0.08
+            w.body.rotation.x = Math.sin(w.crawlPhase) * 0.12 - Math.min(0.72, jumpArc * 0.2)
+            w.body.rotation.z = Math.sin(w.crawlPhase * 0.7) * 0.08
+            w.mouth.rotation.x = Math.sin(w.crawlPhase * 1.3) * 0.12 + Math.min(0.48, jumpArc * 0.14)
+            w.fins.forEach((fin, idx) => { fin.rotation.x = (fin.userData.baseRotX ?? 0) + Math.sin(w.crawlPhase + idx * 0.7) * 0.08 })
             w.light.intensity = 1.25 + Math.sin(performance.now() * 0.01) * 0.25
             if (w.hurtTimer > 0) {
               w.hurtTimer -= dt
@@ -5275,8 +5507,8 @@ export default function GameCanvas() {
             const dx = o.pos.x - playerPos.x
             const dz = o.pos.z - playerPos.z
             const d = Math.sqrt(dx * dx + dz * dz)
-            if (!boss || d < boss.dist) boss = { name: 'Huge Green Orc', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc', state: o.state, grabCooldown: Math.max(0, o.grabCooldown) }
-            if (d < 40) best = { name: 'Huge Green Orc', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc' }
+            if (!boss || d < boss.dist) boss = { name: 'ORC', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc', state: o.state, grabCooldown: Math.max(0, o.grabCooldown) }
+            if (d < 40) best = { name: 'ORC', hp: o.hp, maxHp: ORC_HEALTH, dist: d, kind: 'orc' }
           }
           ;(window as any).__nightfall_nearestEnemy = best
           ;(window as any).__nightfall_boss = boss
@@ -5400,6 +5632,11 @@ export default function GameCanvas() {
               if (glow) glow.intensity = 1.15 + Math.sin(performance.now() * 0.008) * 0.28
               if (core) core.rotation.x += dt * 0.8
               d.mesh.position.y += Math.sin(performance.now() * 0.006 + d.px) * 0.025
+            } else if (d.id === 'torch') {
+              const flame = (d.mesh as any).__torchFlame as THREE.Group | undefined
+              const light = (d.mesh as any).__torchLight as THREE.PointLight | undefined
+              if (flame) flame.scale.setScalar(0.9 + Math.sin(performance.now() * 0.014 + d.px) * 0.08)
+              if (light) light.intensity = 0.6 + Math.sin(performance.now() * 0.011 + d.pz) * 0.16
             }
             // Despawn warning: rapid flicker in the last 5 seconds of life
             if (d.life < 5) {
@@ -5553,10 +5790,10 @@ export default function GameCanvas() {
       }
 
       // Check The Worm. Hitting the exposed mouth forces it above ground;
-      // once emerged, each successful stab counts as one of the three kill hits.
+      // once emerged, swords/axes deal weapon-specific boss damage.
       const wormHit = findWormHit(raycaster)
       if (wormHit) {
-        damageWorm(wormHit.worm)
+        damageWorm(wormHit.worm, eq as ItemId | null, dmg)
         return
       }
 
@@ -5635,7 +5872,7 @@ export default function GameCanvas() {
         }
       }
 
-      // Check huge orc boss, including weak spots that knock it down.
+      // Check ORC boss, including weak spots that knock it down.
       const orcHits: { orc: OrcBoss; hit: THREE.Intersection; weak: boolean }[] = []
       for (const o of orcs) {
         const hits = raycaster.intersectObject(o.mesh, true)
@@ -6054,7 +6291,7 @@ export default function GameCanvas() {
       return {
         health: s.health, level: s.level, xp: s.xp,
         posX: playerPos.x, posY: playerPos.y, posZ: playerPos.z,
-        timeOfDay: s.timeOfDay, equippedItem: s.equippedItem,
+        timeOfDay: s.timeOfDay, equippedItem: s.equippedItem, offhandItem: s.offhandItem,
         inventory: s.inventory, structures: s.structures,
         deaths: s.deaths, zombiesKilled: s.zombiesKilled,
       }

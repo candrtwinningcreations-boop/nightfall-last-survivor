@@ -1,0 +1,21 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(62 35) rotate(90) scale(38)">
+      <stop stop-color="#fff7ad" stop-opacity="0.95"/>
+      <stop offset="0.45" stop-color="#fb923c" stop-opacity="0.65"/>
+      <stop offset="1" stop-color="#ef4444" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wood" x1="44" y1="55" x2="86" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7c3f16"/>
+      <stop offset="1" stop-color="#3f220d"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="38" r="45" fill="url(#glow)"/>
+  <path d="M66 48c15-8 13-24 3-38 2 16-14 19-16 34-1 8 5 12 13 4Z" fill="#fde68a"/>
+  <path d="M55 57c-14-14-1-31 12-45-4 17 18 23 14 42-3 15-17 22-26 3Z" fill="#f97316"/>
+  <path d="M59 55c-6-9 2-18 9-28-1 12 11 15 8 27-2 8-11 12-17 1Z" fill="#fef3c7"/>
+  <path d="M43 55h42l-5 14H48l-5-14Z" fill="#2f1f12"/>
+  <path d="M54 64h21l22 54c1 3-1 6-4 6H76L50 68c-1-2 1-4 4-4Z" fill="url(#wood)"/>
+  <path d="M61 70l22 53M72 70l21 49" stroke="#9a5a2f" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <path d="M49 74h34" stroke="#1f1309" stroke-width="5" stroke-linecap="round"/>
+</svg>

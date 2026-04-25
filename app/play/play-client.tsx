@@ -129,6 +129,10 @@ export default function PlayClient() {
         setHealth(data.health)
         setLevel(data.level, data.xp)
         setTime(data.timeOfDay)
+        const savedOffhand = data.offhandItem === 'torch' ? 'torch' : (() => {
+          try { return localStorage.getItem(`nightfall:offhand:${sid || 'default'}`) === 'torch' ? 'torch' : null } catch { return null }
+        })()
+        useGame.getState().setOffhand(savedOffhand)
         try {
           const inv = JSON.parse(data.inventoryJson || '[]')
           if (Array.isArray(inv) && inv.length > 0) {
@@ -256,10 +260,11 @@ export default function PlayClient() {
         const state = useGame.getState()
         const save = (window as any).__nightfallSave?.() ?? {
           health: state.health, level: state.level, xp: state.xp, posX: 0, posY: 2, posZ: 0,
-          timeOfDay: state.timeOfDay, equippedItem: state.equippedItem,
+          timeOfDay: state.timeOfDay, equippedItem: state.equippedItem, offhandItem: state.offhandItem,
           inventory: state.inventory, structures: state.structures, deaths: state.deaths, zombiesKilled: state.zombiesKilled,
         }
         const sid = serverIdRef.current
+        try { localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, state.offhandItem || '') } catch {}
         const saveBody = { ...save, serverId: sid || undefined, guestId: guestIdRef.current || undefined, guestName: guestNameRef.current || undefined }
         navigator.sendBeacon?.('/api/save', new Blob([JSON.stringify(saveBody)], { type: 'application/json' }))
         if (sid) {
@@ -283,6 +288,7 @@ export default function PlayClient() {
     const save = (window as any).__nightfallSave?.()
     if (!save) return
     const sid = serverIdRef.current
+    try { localStorage.setItem(`nightfall:offhand:${sid || 'default'}`, save.offhandItem || '') } catch {}
     const body = {
       ...save,
       serverId: sid || undefined,

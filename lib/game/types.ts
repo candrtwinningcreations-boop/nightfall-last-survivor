@@ -4,6 +4,7 @@ export type ItemId =
   | 'stone'
   | 'sap'
   | 'glowstone'
+  | 'torch'
   | 'stone_pickaxe'
   | 'stone_sword'
   | 'stone_axe'
@@ -52,6 +53,7 @@ export interface ItemDef {
   description: string
   color: string // accent color for slot
   tool?: 'pickaxe' | 'axe' | 'sword'
+  offhand?: 'torch'
   tier?: 1 | 2 // 1 = stone, 2 = iron
   // Damage reduction applied while this item is equipped (0..1, e.g. 0.25 = -25%)
   defense?: number
@@ -123,6 +125,7 @@ export interface SaveData {
   posZ: number
   timeOfDay: number
   equippedItem: string | null
+  offhandItem?: string | null
   inventoryJson: string
   structuresJson: string
   deaths: number

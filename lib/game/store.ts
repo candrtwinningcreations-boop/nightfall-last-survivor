@@ -31,6 +31,7 @@ export interface GameState {
   buildInventory: Partial<Record<ItemId, number>>
   hotbarIndex: number // 0..4 uses first 5 slots
   equippedItem: ItemId | null
+  offhandItem: ItemId | null
   mode: GameMode
   damageFlash: number // 0..1
   lastHitAt: number
@@ -72,6 +73,7 @@ export interface GameState {
   swapSlots: (a: number, b: number) => void
   setHotbar: (i: number) => void
   setEquipped: (id: ItemId | null) => void
+  setOffhand: (id: ItemId | null) => void
   addStructure: (s: StructureData) => void
   removeStructure: (id: string) => void
   setStructures: (s: StructureData[]) => void
@@ -111,6 +113,7 @@ export const useGame = create<GameState>((set, get) => ({
   buildInventory: {},
   hotbarIndex: 0,
   equippedItem: null,
+  offhandItem: null,
   mode: 'play',
   damageFlash: 0,
   lastHitAt: 0,
@@ -279,6 +282,7 @@ export const useGame = create<GameState>((set, get) => ({
     set({ hotbarIndex: idx, equippedItem: slot?.id ?? null })
   },
   setEquipped: (id) => set({ equippedItem: id }),
+  setOffhand: (id) => set({ offhandItem: id }),
   addStructure: (s) => set((st) => ({ structures: [...st.structures, s] })),
   removeStructure: (id) => set((st) => ({ structures: st.structures.filter(s => s.id !== id) })),
   setStructures: (s) => set({ structures: s }),
@@ -316,7 +320,7 @@ export const useGame = create<GameState>((set, get) => ({
   showToast: (t) => set({ toast: { text: t, at: performance.now() } }),
   reset: () => set({
     health: 100, level: 1, xp: 0, timeOfDay: 0.25,
-    inventory: starterInv(), buildInventory: {}, hotbarIndex: 0, equippedItem: null, mode: 'play',
+    inventory: starterInv(), buildInventory: {}, hotbarIndex: 0, equippedItem: null, offhandItem: null, mode: 'play',
     damageFlash: 0, zombiesKilled: 0, deaths: 0, structures: [], buildSelection: 'wall',
     toast: null, craftingContext: 'normal', cosmetics: {}, credits: 0, keysGuideVisible: true,
   }),

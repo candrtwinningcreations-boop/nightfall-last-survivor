@@ -3,7 +3,7 @@
 import { useGame, type CosmeticState } from '@/lib/game/store'
 import { ITEMS, RARITY_COLOR, SHOP_LISTINGS, xpForNextLevel } from '@/lib/game/items'
 import type { InventorySlot, ItemId, CosmeticSlot, ItemDef } from '@/lib/game/types'
-import { X, Backpack, Shirt, ShoppingBag, User, Heart, Skull, Swords, Star, Lock, Coins } from 'lucide-react'
+import { X, Backpack, Shirt, ShoppingBag, User, Heart, Skull, Swords, Star, Lock, Coins, Flame } from 'lucide-react'
 import { useState } from 'react'
 import { ItemIcon } from './item-icon'
 
@@ -41,7 +41,9 @@ export default function InventoryPanel() {
   const zombiesKilled = useGame(s => s.zombiesKilled)
   const credits = useGame(s => s.credits)
   const cosmetics = useGame(s => s.cosmetics)
+  const offhandItem = useGame(s => s.offhandItem)
   const equipCosmetic = useGame(s => s.equipCosmetic)
+  const setOffhand = useGame(s => s.setOffhand)
   const removeItem = useGame(s => s.removeItem)
   const addItem = useGame(s => s.addItem)
   const showToast = useGame(s => s.showToast)
@@ -102,6 +104,25 @@ export default function InventoryPanel() {
     }
   }
 
+  const tryEquipOffhand = (id: ItemId) => {
+    const def = ITEMS[id]
+    if (def.offhand !== 'torch') return
+    if (!removeItem(id, 1)) return
+    if (offhandItem) addItem(offhandItem, 1)
+    setOffhand(id)
+    showToast(`🔥 Equipped ${def.name} in offhand`)
+  }
+
+  const unequipOffhand = () => {
+    if (!offhandItem) return
+    if (addItem(offhandItem, 1)) {
+      setOffhand(null)
+      showToast(`➤ Unequipped ${ITEMS[offhandItem].name}`)
+    } else {
+      showToast('📁 Inventory full')
+    }
+  }
+
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-auto bg-black/70 backdrop-blur-sm">
       <div className="w-[880px] max-w-[96vw] max-h-[92vh] bg-zinc-950 border border-white/10 rounded-xl shadow-[0_20px_80px_-20px_rgba(0,0,0,0.8)] flex flex-col animate-in fade-in zoom-in duration-200">
@@ -154,7 +175,7 @@ export default function InventoryPanel() {
           {tab === 'inventory' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="md:col-span-2">
-                <p className="text-xs text-zinc-500 mb-3 font-mono">Drag items to rearrange. First row (1-5) is your hotbar. Double-click cosmetics to equip.</p>
+                <p className="text-xs text-zinc-500 mb-3 font-mono">Drag items to rearrange. First row (1-5) is your hotbar. Double-click cosmetics to wear or torches to equip offhand.</p>
                 <div className="grid grid-cols-6 gap-2">
                   {inventory.map((slot: InventorySlot, i: number) => {
                     const def = slot?.id ? ITEMS[slot.id] : null
@@ -168,12 +189,16 @@ export default function InventoryPanel() {
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={() => handleDrop(i)}
                         onClick={() => { if (isHotbar) setHotbar(i) }}
-                        onDoubleClick={() => { if (def?.cosmeticSlot && slot.id) tryEquipCosmetic(slot.id) }}
+                        onDoubleClick={() => {
+                          if (!slot.id) return
+                          if (def?.offhand === 'torch') tryEquipOffhand(slot.id)
+                          else if (def?.cosmeticSlot) tryEquipCosmetic(slot.id)
+                        }}
                         className={`relative aspect-square rounded-md flex items-center justify-center cursor-pointer select-none transition-all ${
                           isActive ? 'border-amber-400 ring-2 ring-amber-400/40' : ''
                         } ${isHotbar ? 'bg-zinc-800/70 border border-amber-500/20' : 'bg-zinc-900/60 border border-white/10'} hover:bg-zinc-800`}
                         style={def?.rarity ? { boxShadow: `0 0 0 2px ${RARITY_COLOR[def.rarity]} inset` } : undefined}
-                        title={describeItem(def ?? null, def?.cosmeticSlot ? '(double-click to wear)' : '')}
+                        title={describeItem(def ?? null, def?.offhand === 'torch' ? '(double-click to equip offhand)' : def?.cosmeticSlot ? '(double-click to wear)' : '')}
                       >
                         {def && slot.id && (
                           <>
@@ -183,6 +208,9 @@ export default function InventoryPanel() {
                             )}
                             {def.cosmeticSlot && (
                               <span className="absolute top-0.5 right-1 text-[8px] font-bold text-pink-300">♥</span>
+                            )}
+                            {def.offhand === 'torch' && (
+                              <span className="absolute top-0.5 right-1 text-[9px] font-bold text-orange-300">OFF</span>
                             )}
                           </>
                         )}
@@ -234,6 +262,21 @@ export default function InventoryPanel() {
                       )
                     })}
                   </div>
+                </div>
+                <div className="rounded-lg bg-white/5 border border-orange-500/20 p-3">
+                  <h4 className="text-xs uppercase tracking-widest text-zinc-400 mb-2 flex items-center gap-1.5"><Flame className="w-3.5 h-3.5 text-orange-300" /> Offhand</h4>
+                  <button
+                    onClick={unequipOffhand}
+                    disabled={!offhandItem}
+                    className="w-full h-16 rounded-md bg-zinc-900/70 border border-white/10 hover:bg-zinc-800 disabled:hover:bg-zinc-900/70 disabled:opacity-70 flex items-center justify-center gap-3 text-left"
+                    title={offhandItem ? `${ITEMS[offhandItem].name}\n— click to unequip` : 'Empty offhand\nDouble-click a Torch in your inventory to equip it here.'}
+                  >
+                    {offhandItem ? <ItemIcon id={offhandItem} size={42} /> : <Flame className="w-6 h-6 text-zinc-700" />}
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-white">{offhandItem ? ITEMS[offhandItem].name : 'Empty'}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">Main hand remains free</div>
+                    </div>
+                  </button>
                 </div>
               </div>
             </div>
