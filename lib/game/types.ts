@@ -3,6 +3,7 @@ export type ItemId =
   | 'log'
   | 'stone'
   | 'sap'
+  | 'glowstone'
   | 'stone_pickaxe'
   | 'stone_sword'
   | 'stone_axe'

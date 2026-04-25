@@ -33,13 +33,21 @@ const VAMPIRE_HEALTH = 180
 const VAMPIRE_DAMAGE = 18
 const VAMPIRE_ATTACK_RANGE = 2.2
 const MAX_VAMPIRES = 2
-// Goblins: pint-sized night thieves. They sprint in, snatch
+// Goblins: pint-sized daytime forest thieves. They sprint in, snatch
 // one random stack from the player's inventory, then bolt for the tree-line.
 // Slay them before they escape to recover your loot.
 const GOBLIN_SPEED = 5.2
 const GOBLIN_HEALTH = 28
 const GOBLIN_ATTACK_RANGE = 1.1
 const MAX_GOBLINS = 1
+// The Worm: desert day boss. It burrows under sand, telegraphs a lethal
+// mouth eruption, then can be forced above ground and killed with 3 stabs.
+const WORM_SPEED = 2.65
+const WORM_HEALTH = 3
+const WORM_WARNING_RADIUS = 1.75
+const WORM_LETHAL_RADIUS = 1.2
+const WORM_TRIGGER_RANGE = 12
+const MAX_WORMS = 1
 // Huge green orc: roaming boss with weak spots, knockdowns, club attacks,
 // and a close-range grab/throw move.
 const ORC_SPEED = 2.45
@@ -61,6 +69,10 @@ const CYCLE_LENGTH_SEC = DAY_LENGTH_SEC + NIGHT_LENGTH_SEC
 
 function isNightTimeValue(t: number) {
   return t < DAY_START || t > NIGHT_START
+}
+
+function isDayTimeValue(t: number) {
+  return !isNightTimeValue(t)
 }
 
 function timeOfDayToCycleSeconds(t: number) {
@@ -171,6 +183,27 @@ type Goblin = {
   legR: THREE.Object3D
   body: THREE.Object3D
   walkPhase: number
+}
+
+type WormState = 'burrowing' | 'warning' | 'mouth' | 'emerged' | 'dying'
+
+type WormBoss = {
+  id: string
+  mesh: THREE.Group
+  pos: THREE.Vector3
+  vel: THREE.Vector3
+  hp: number
+  state: WormState
+  stateTimer: number
+  attackCooldown: number
+  hurtTimer: number
+  crawlPhase: number
+  warningTarget: THREE.Vector3
+  mound: THREE.Group
+  body: THREE.Group
+  mouth: THREE.Group
+  warning: THREE.Mesh
+  light: THREE.PointLight
 }
 
 type OrcState = 'walking' | 'roaring' | 'down' | 'gettingUp' | 'dying'
@@ -373,6 +406,8 @@ export default function GameCanvas() {
     const cactusRidgeMat = new THREE.MeshStandardMaterial({ color: 0x4fa84f, roughness: 0.9, metalness: 0 })
     const sapMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0x7c2d12, emissiveIntensity: 0.22, roughness: 0.28, metalness: 0, transparent: true, opacity: 0.9 })
     const sapPuddleMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    const glowstoneCoreMat = new THREE.MeshStandardMaterial({ color: 0xbdfcff, emissive: 0x48f7ff, emissiveIntensity: 1.35, roughness: 0.18, metalness: 0.05, transparent: true, opacity: 0.92 })
+    const glowstoneFacetMat = new THREE.MeshStandardMaterial({ color: 0x77e7ff, emissive: 0x1fb6ff, emissiveIntensity: 0.72, roughness: 0.24, metalness: 0.12, transparent: true, opacity: 0.82 })
     const caveFloorMat = new THREE.MeshStandardMaterial({ color: 0x090a0d, roughness: 1, metalness: 0 })
     const caveRockMat = new THREE.MeshStandardMaterial({ color: 0x2b2c33, roughness: 0.98, metalness: 0.04 })
     const caveMouthMat = new THREE.MeshBasicMaterial({ color: 0x020204, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
@@ -409,6 +444,8 @@ export default function GameCanvas() {
     const sapDropGeo = new THREE.SphereGeometry(0.22, 18, 14)
     const sapTipGeo = new THREE.ConeGeometry(0.12, 0.28, 14)
     const sapPuddleGeo = new THREE.CircleGeometry(0.28, 24)
+    const glowstoneCoreGeo = new THREE.OctahedronGeometry(0.28, 1)
+    const glowstoneShardGeo = new THREE.ConeGeometry(0.08, 0.34, 5)
     const caveFloorGeo = new THREE.CircleGeometry(1, 40)
     const caveMouthGeo = new THREE.CircleGeometry(1, 32)
     const caveCrystalGeo = new THREE.ConeGeometry(0.08, 0.42, 6)
@@ -850,7 +887,7 @@ export default function GameCanvas() {
       c.terrain.geometry.dispose()
     }
 
-    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, caveFloorGeo, caveMouthGeo, caveCrystalGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
+    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, glowstoneCoreGeo, glowstoneShardGeo, caveFloorGeo, caveMouthGeo, caveCrystalGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
 
     function updateChunks(px: number, pz: number) {
       const pcx = Math.floor(px / CHUNK_SIZE)
@@ -1131,6 +1168,27 @@ export default function GameCanvas() {
     heldSapGroup.add(heldSapTip)
     heldSapGroup.visible = false
     weaponGroup.add(heldSapGroup)
+
+    // Held Glowstone — faceted luminous crystal with smaller shards and a real light.
+    const heldGlowstoneGroup = new THREE.Group()
+    const heldGlowstoneCore = new THREE.Mesh(glowstoneCoreGeo, glowstoneCoreMat)
+    heldGlowstoneCore.scale.set(0.55, 0.75, 0.55)
+    heldGlowstoneCore.position.y = 0.08
+    heldGlowstoneCore.castShadow = true
+    heldGlowstoneGroup.add(heldGlowstoneCore)
+    for (let i = 0; i < 3; i++) {
+      const shard = new THREE.Mesh(glowstoneShardGeo, glowstoneFacetMat)
+      const a = (i / 3) * Math.PI * 2
+      shard.position.set(Math.cos(a) * 0.12, -0.03, Math.sin(a) * 0.12)
+      shard.rotation.z = (i - 1) * 0.35
+      shard.castShadow = true
+      heldGlowstoneGroup.add(shard)
+    }
+    const heldGlowstoneLight = new THREE.PointLight(0x68f8ff, 0.9, 2.2, 2)
+    heldGlowstoneLight.position.y = 0.12
+    heldGlowstoneGroup.add(heldGlowstoneLight)
+    heldGlowstoneGroup.visible = false
+    weaponGroup.add(heldGlowstoneGroup)
 
     // Held wood planks — flat wide planks, for 'wood' item
     const heldWoodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 })
@@ -1525,7 +1583,7 @@ export default function GameCanvas() {
     // reconciled quickly for everyone on the same server.
     // ---------------------------------------------------------------------
     type WorldEvent = { id: string; type: string; payload: any }
-    type EnemySnapshot = { id: string; kind: 'zombie' | 'vampire' | 'goblin' | 'orc'; x: number; y: number; z: number; hp: number; state?: string; fleeing?: boolean }
+    type EnemySnapshot = { id: string; kind: 'zombie' | 'vampire' | 'goblin' | 'worm' | 'orc'; x: number; y: number; z: number; hp: number; state?: string; fleeing?: boolean }
     const worldClientId = (() => {
       try {
         let id = window.localStorage.getItem('nightfall:worldClientId')
@@ -2067,6 +2125,162 @@ export default function GameCanvas() {
       useGame.getState().showToast('🦇 A vampire stalks you...')
     }
 
+    // --- The Worm (desert day boss) ---
+    const worms: WormBoss[] = []
+
+    function createWorm(x: number, y: number, z: number, id = makeNetId('w')): WormBoss {
+      const g = new THREE.Group()
+      const hideMat = new THREE.MeshStandardMaterial({ color: 0x5a2d16, roughness: 0.82, metalness: 0.02 })
+      const bellyMat = new THREE.MeshStandardMaterial({ color: 0x9a5a30, roughness: 0.86, metalness: 0 })
+      const toothMat = new THREE.MeshBasicMaterial({ color: 0xfff7d6 })
+      const mouthMat = new THREE.MeshStandardMaterial({ color: 0x270707, emissive: 0x440000, emissiveIntensity: 0.45, roughness: 0.7 })
+      const sandMat = new THREE.MeshStandardMaterial({ color: 0xd7ad68, roughness: 1, metalness: 0 })
+
+      const mound = new THREE.Group()
+      const moundBody = new THREE.Mesh(new THREE.SphereGeometry(0.85, 18, 10), sandMat)
+      moundBody.scale.set(1.25, 0.18, 0.55)
+      moundBody.position.y = 0.08
+      mound.add(moundBody)
+      for (let i = 0; i < 5; i++) {
+        const pebble = new THREE.Mesh(new THREE.SphereGeometry(0.12 + i * 0.015, 8, 5), sandMat)
+        pebble.position.set((i - 2) * 0.28, 0.12, Math.sin(i * 1.7) * 0.16)
+        pebble.scale.y = 0.35
+        mound.add(pebble)
+      }
+      g.add(mound)
+
+      const body = new THREE.Group()
+      for (let i = 0; i < 7; i++) {
+        const seg = new THREE.Mesh(new THREE.SphereGeometry(0.45 - i * 0.025, 18, 12), i % 2 ? bellyMat : hideMat)
+        seg.scale.set(1.0, 0.72, 0.82)
+        seg.position.set(0, 0.42, -i * 0.48)
+        seg.castShadow = true
+        body.add(seg)
+      }
+      body.visible = false
+      g.add(body)
+
+      const mouth = new THREE.Group()
+      mouth.position.set(0, 0.28, 0.42)
+      const maw = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.36, 0.75, 24, 1, true), mouthMat)
+      maw.rotation.x = Math.PI / 2
+      maw.castShadow = true
+      mouth.add(maw)
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.055, 8, 24), hideMat)
+      rim.rotation.x = Math.PI / 2
+      rim.position.z = 0.38
+      rim.castShadow = true
+      mouth.add(rim)
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2
+        const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.18, 6), toothMat)
+        tooth.position.set(Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0.43)
+        tooth.rotation.set(Math.PI / 2, 0, -a)
+        mouth.add(tooth)
+      }
+      mouth.visible = false
+      g.add(mouth)
+
+      const warning = new THREE.Mesh(
+        new THREE.RingGeometry(WORM_WARNING_RADIUS * 0.72, WORM_WARNING_RADIUS, 48),
+        new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.58, side: THREE.DoubleSide, depthWrite: false })
+      )
+      warning.rotation.x = -Math.PI / 2
+      warning.position.set(x, y + 0.035, z)
+      warning.visible = false
+      scene.add(warning)
+
+      const light = new THREE.PointLight(0xff2600, 0, 6, 2)
+      light.position.set(0, 0.7, 0.25)
+      g.add(light)
+
+      g.position.set(x, y, z)
+      scene.add(g)
+      return {
+        id,
+        mesh: g,
+        pos: new THREE.Vector3(x, y, z),
+        vel: new THREE.Vector3(),
+        hp: WORM_HEALTH,
+        state: 'burrowing',
+        stateTimer: 0,
+        attackCooldown: 2.5,
+        hurtTimer: 0,
+        crawlPhase: Math.random() * Math.PI * 2,
+        warningTarget: new THREE.Vector3(x, y, z),
+        mound,
+        body,
+        mouth,
+        warning,
+        light,
+      }
+    }
+
+    function removeWorm(w: WormBoss) {
+      scene.remove(w.mesh)
+      scene.remove(w.warning)
+      w.warning.geometry.dispose()
+      ;(w.warning.material as THREE.Material).dispose?.()
+      w.mesh.traverse((obj: any) => { if (obj.geometry && !sharedGeos.has(obj.geometry)) obj.geometry.dispose?.(); if (obj.material && obj.material.dispose) obj.material.dispose() })
+    }
+
+    function findWormHit(ray: THREE.Raycaster) {
+      let best: { worm: WormBoss; distance: number } | null = null
+      for (const w of worms) {
+        if (w.state === 'burrowing' || w.state === 'warning' || w.state === 'dying') continue
+        const hits = ray.intersectObject(w.mesh, true)
+        if (hits.length && hits[0].distance < REACH + 1.4) {
+          if (!best || hits[0].distance < best.distance) best = { worm: w, distance: hits[0].distance }
+          continue
+        }
+        const centerY = w.state === 'mouth' ? w.pos.y + 0.55 : w.pos.y + 0.7
+        const center = new THREE.Vector3(w.pos.x, centerY, w.pos.z)
+        const toCenter = new THREE.Vector3().subVectors(center, ray.ray.origin)
+        const along = toCenter.dot(ray.ray.direction)
+        if (along > 0 && along < REACH + 1.4) {
+          const closest = new THREE.Vector3().copy(ray.ray.origin).addScaledVector(ray.ray.direction, along)
+          if (closest.distanceTo(center) < (w.state === 'mouth' ? 0.8 : 1.05)) {
+            if (!best || along < best.distance) best = { worm: w, distance: along }
+          }
+        }
+      }
+      return best
+    }
+
+    function forceWormEmerge(w: WormBoss) {
+      if (w.state === 'emerged' || w.state === 'dying') return
+      w.state = 'emerged'
+      w.stateTimer = 0
+      w.hp = Math.max(1, w.hp)
+      w.warning.visible = false
+      w.mound.visible = false
+      w.body.visible = true
+      w.mouth.visible = true
+      w.light.intensity = 1.6
+      w.mesh.position.y = heightAt(w.pos.x, w.pos.z)
+      useGame.getState().showToast('🪱 The Worm bursts from the sand — stab it 3 times!')
+    }
+
+    function damageWorm(w: WormBoss) {
+      if (w.state === 'dying') return
+      if (w.state === 'mouth') {
+        forceWormEmerge(w)
+        return
+      }
+      if (w.state !== 'emerged') return
+      w.hp -= 1
+      w.hurtTimer = 0.25
+      if (w.hp <= 0) {
+        w.state = 'dying'
+        w.stateTimer = 1.8
+        w.vel.set(0, 0, 0)
+        w.warning.visible = false
+        useGame.getState().showToast('💎 The Worm curls up and dies! Glowstone dropped.')
+      } else {
+        useGame.getState().showToast(`🪱 Worm stabbed! ${w.hp} hit${w.hp === 1 ? '' : 's'} left.`)
+      }
+    }
+
     // --- Huge Green Orc Boss ---
     const orcs: OrcBoss[] = []
 
@@ -2220,6 +2434,22 @@ export default function GameCanvas() {
         const x = playerPos.x + Math.cos(angle) * dist
         const z = playerPos.z + Math.sin(angle) * dist
         if (caveSpecNear(x, z, 1.5)) continue
+        return { x, z }
+      }
+      return null
+    }
+
+    function findBiomeSpawnPoint(targetBiome: Biome, minDist: number, extraDist: number, sx?: number, sz?: number) {
+      if (typeof sx === 'number' && typeof sz === 'number') {
+        if (caveSpecNear(sx, sz, 1.5) || biomeAt(sx, sz) !== targetBiome) return null
+        return { x: sx, z: sz }
+      }
+      for (let attempt = 0; attempt < 32; attempt++) {
+        const angle = Math.random() * Math.PI * 2
+        const dist = minDist + Math.random() * extraDist
+        const x = playerPos.x + Math.cos(angle) * dist
+        const z = playerPos.z + Math.sin(angle) * dist
+        if (caveSpecNear(x, z, 1.5) || biomeAt(x, z) !== targetBiome) continue
         return { x, z }
       }
       return null
@@ -3120,6 +3350,28 @@ export default function GameCanvas() {
         const glow = new THREE.PointLight(0xf59e0b, 0.45, 2.4, 2)
         glow.position.y = 0.25
         group.add(glow)
+      } else if (id === 'glowstone') {
+        const core = new THREE.Mesh(glowstoneCoreGeo, glowstoneCoreMat)
+        core.scale.set(0.92, 1.25, 0.92)
+        core.position.y = 0.18
+        core.castShadow = true
+        group.add(core)
+        for (let i = 0; i < 5; i++) {
+          const shard = new THREE.Mesh(glowstoneShardGeo, glowstoneFacetMat)
+          const a = (i / 5) * Math.PI * 2
+          shard.position.set(Math.cos(a) * 0.2, 0.02 + (i % 2) * 0.06, Math.sin(a) * 0.2)
+          shard.rotation.set(0.35 + i * 0.17, a, (i - 2) * 0.22)
+          shard.castShadow = true
+          group.add(shard)
+        }
+        const aura = new THREE.Mesh(new THREE.SphereGeometry(0.52, 18, 12), new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.18, depthWrite: false }))
+        aura.position.y = 0.18
+        group.add(aura)
+        const glow = new THREE.PointLight(0x67e8f9, 1.25, 5.2, 2)
+        glow.position.y = 0.35
+        ;(group as any).__glowstoneLight = glow
+        ;(group as any).__glowstoneCore = core
+        group.add(glow)
       } else {
         const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(def.color) })
         const cube = new THREE.Mesh(dropGeo, mat)
@@ -3357,27 +3609,51 @@ export default function GameCanvas() {
     }
 
     function clearDaytimeHostiles() {
+      // Daylight clears night-only threats. Day predators (forest goblins and
+      // desert worms) remain active until nightfall or until they despawn.
       clearZombies()
       for (const v of vampires) removeVampire(v)
       vampires.length = 0
-      for (const g of goblins) removeGoblin(g)
-      goblins.length = 0
       for (const o of orcs) removeOrc(o)
       orcs.length = 0
       ;(window as any).__nightfall_nearestEnemy = null
       ;(window as any).__nightfall_boss = null
     }
 
+    function clearDayOnlyHostiles() {
+      for (const g of goblins) removeGoblin(g)
+      goblins.length = 0
+      for (const w of worms) removeWorm(w)
+      worms.length = 0
+      ;(window as any).__nightfall_nearestEnemy = null
+      ;(window as any).__nightfall_boss = null
+    }
+
     function spawnGoblin(id = makeNetId('g'), announce = true, sx?: number, sz?: number) {
-      if (!isNightTimeValue(timeOfDayAcc)) return
+      if (!isDayTimeValue(timeOfDayAcc)) return
+      if (biomeAt(playerPos.x, playerPos.z) !== 'forest' && (typeof sx !== 'number' || typeof sz !== 'number')) return
       if (goblins.some(g => g.id === id) || goblins.length >= MAX_GOBLINS) return
-      const spawn = findSurfaceSpawnPoint(38, 18, sx, sz)
+      const spawn = findBiomeSpawnPoint('forest', 38, 18, sx, sz)
       if (!spawn) return
       const { x, z } = spawn
       const y = heightAt(x, z)
       goblins.push(createGoblin(x, y, z, id))
       if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'goblin', x, y, z })
-      useGame.getState().showToast('🟢 A goblin eyes your loot!')
+      useGame.getState().showToast('🟢 A forest goblin eyes your loot!')
+    }
+
+    function spawnWorm(id = makeNetId('w'), announce = true, sx?: number, sz?: number) {
+      if (!isDayTimeValue(timeOfDayAcc)) return false
+      if (biomeAt(playerPos.x, playerPos.z) !== 'desert' && (typeof sx !== 'number' || typeof sz !== 'number')) return false
+      if (worms.some(w => w.id === id) || worms.length >= MAX_WORMS) return false
+      const spawn = findBiomeSpawnPoint('desert', 28, 18, sx, sz)
+      if (!spawn) return false
+      const { x, z } = spawn
+      const y = heightAt(x, z)
+      worms.push(createWorm(x, y, z, id))
+      if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'worm', x, y, z })
+      useGame.getState().showToast('〰️ The sand shifts... The Worm is hunting you!')
+      return true
     }
 
     // At dawn, vampires don't just vanish — they transform into bats and fly away.
@@ -3408,6 +3684,8 @@ export default function GameCanvas() {
     let orcSpawnTimer = 140 + Math.random() * 90
     // Goblin first sighting happens a few minutes in; respawns are even rarer.
     let goblinSpawnTimer = 180 + Math.random() * 120
+    // Desert day boss timer. It only ticks while the player is in desert daylight.
+    let wormSpawnTimer = 95 + Math.random() * 75
     let bob = 0
 
     // ---------------------------------------------------------------------
@@ -3583,6 +3861,7 @@ export default function GameCanvas() {
         ...zombies.map(z => ({ id: z.id, kind: 'zombie' as const, x: z.pos.x, y: z.pos.y, z: z.pos.z, hp: z.hp })),
         ...vampires.map(v => ({ id: v.id, kind: 'vampire' as const, x: v.pos.x, y: v.pos.y, z: v.pos.z, hp: v.hp, fleeing: v.fleeing })),
         ...goblins.map(g => ({ id: g.id, kind: 'goblin' as const, x: g.pos.x, y: g.pos.y, z: g.pos.z, hp: g.hp, state: g.phase })),
+        ...worms.map(w => ({ id: w.id, kind: 'worm' as const, x: w.pos.x, y: w.pos.y, z: w.pos.z, hp: w.hp, state: w.state })),
         ...orcs.map(o => ({ id: o.id, kind: 'orc' as const, x: o.pos.x, y: o.pos.y, z: o.pos.z, hp: o.hp, state: o.state })),
       ]
     }
@@ -3644,10 +3923,10 @@ export default function GameCanvas() {
       appliedWorldEvents.add(evt.id)
       const p = evt.payload || {}
       if (evt.type === 'enemy_spawn') {
-        if (!isNightTimeValue(timeOfDayAcc)) return
         if (p.kind === 'zombie') spawnZombie(p.id, false, Number(p.x), Number(p.z))
         else if (p.kind === 'vampire') spawnVampire(p.id, false, Number(p.x), Number(p.z))
         else if (p.kind === 'goblin') spawnGoblin(p.id, false, Number(p.x), Number(p.z))
+        else if (p.kind === 'worm') spawnWorm(p.id, false, Number(p.x), Number(p.z))
         else if (p.kind === 'orc') spawnOrc(p.id, false, Number(p.x), Number(p.z))
       } else if (evt.type === 'resource_break') {
         if (p.kind === 'tree' || p.kind === 'stone' || p.kind === 'cactus') removeResourceMesh(p.kind, Number(p.x), Number(p.z), p.kind === 'tree' || p.kind === 'cactus')
@@ -3699,23 +3978,23 @@ export default function GameCanvas() {
 
     function reconcileEnemySnapshots(snapshots: EnemySnapshot[]) {
       if (isWorldAuthority) return
-      if (!isNightTimeValue(timeOfDayAcc)) {
-        clearDaytimeHostiles()
-        return
-      }
+      if (isNightTimeValue(timeOfDayAcc)) clearDayOnlyHostiles()
+      else clearDaytimeHostiles()
       const seen = new Set<string>()
       for (const e of snapshots || []) {
         seen.add(e.id)
         const pos = new THREE.Vector3(Number(e.x), Number(e.y), Number(e.z))
-        let target: Zombie | Vampire | Goblin | OrcBoss | undefined
+        let target: Zombie | Vampire | Goblin | WormBoss | OrcBoss | undefined
         if (e.kind === 'zombie') target = zombies.find(z => z.id === e.id) || (spawnZombie(e.id, false, e.x, e.z), zombies.find(z => z.id === e.id))
         else if (e.kind === 'vampire') target = vampires.find(v => v.id === e.id) || (spawnVampire(e.id, false, e.x, e.z), vampires.find(v => v.id === e.id))
         else if (e.kind === 'goblin') target = goblins.find(g => g.id === e.id) || (spawnGoblin(e.id, false, e.x, e.z), goblins.find(g => g.id === e.id))
+        else if (e.kind === 'worm') target = worms.find(w => w.id === e.id) || (spawnWorm(e.id, false, e.x, e.z), worms.find(w => w.id === e.id))
         else if (e.kind === 'orc') target = orcs.find(o => o.id === e.id) || (spawnOrc(e.id, false, e.x, e.z), orcs.find(o => o.id === e.id))
         if (target) {
           target.pos.lerp(pos, 0.65)
           target.hp = Number(e.hp ?? target.hp)
           if (e.kind === 'orc' && e.state) (target as OrcBoss).state = e.state as OrcState
+          if (e.kind === 'worm' && e.state) (target as WormBoss).state = e.state as WormState
           if (e.kind === 'goblin' && e.state) (target as Goblin).phase = e.state as GoblinPhase
           if (e.kind === 'vampire') (target as Vampire).fleeing = !!e.fleeing
           target.mesh.position.copy(target.pos)
@@ -3724,6 +4003,7 @@ export default function GameCanvas() {
       for (let i = zombies.length - 1; i >= 0; i--) if (!seen.has(zombies[i].id)) { removeZombie(zombies[i]); zombies.splice(i, 1) }
       for (let i = vampires.length - 1; i >= 0; i--) if (!seen.has(vampires[i].id)) { removeVampire(vampires[i]); vampires.splice(i, 1) }
       for (let i = goblins.length - 1; i >= 0; i--) if (!seen.has(goblins[i].id)) { removeGoblin(goblins[i]); goblins.splice(i, 1) }
+      for (let i = worms.length - 1; i >= 0; i--) if (!seen.has(worms[i].id)) { removeWorm(worms[i]); worms.splice(i, 1) }
       for (let i = orcs.length - 1; i >= 0; i--) if (!seen.has(orcs[i].id)) { removeOrc(orcs[i]); orcs.splice(i, 1) }
     }
 
@@ -3742,6 +4022,7 @@ export default function GameCanvas() {
         timeCycleOriginMs = Date.now() - timeOfDayToCycleSeconds(timeOfDayAcc) * 1000
         useGame.getState().setTime(timeOfDayAcc)
         if (!isNightTimeValue(timeOfDayAcc)) clearDaytimeHostiles()
+        else clearDayOnlyHostiles()
       }
       for (const evt of (data.events || []) as WorldEvent[]) applyWorldEvent(evt)
       if (data.snapshot?.entities) reconcileEnemySnapshots(data.snapshot.entities as EnemySnapshot[])
@@ -3855,10 +4136,11 @@ export default function GameCanvas() {
       if (isNightNow !== wasNight) {
         wasNight = isNightNow
         if (!isNightNow) {
-          // dawn: daylight is safe — remove all active monsters.
+          // dawn: night monsters retreat, while daytime biome predators may spawn.
           clearDaytimeHostiles()
           state.showToast('🌅 Dawn breaks. The horde retreats.')
         } else {
+          clearDayOnlyHostiles()
           state.showToast('🌙 Nightfall... they are coming.')
         }
       }
@@ -4178,6 +4460,11 @@ export default function GameCanvas() {
             heldWoodMesh.visible = true
           } else if (eq === 'sap') {
             heldSapGroup.visible = true
+          } else if (eq === 'glowstone') {
+            heldGlowstoneGroup.visible = true
+            const pulse = 0.85 + Math.sin(performance.now() * 0.006) * 0.18
+            heldGlowstoneLight.intensity = pulse
+            heldGlowstoneCore.rotation.y += dt * 1.2
           } else if (eq === 'stone' || eq === 'raw_iron' || eq === 'iron_ingot') {
             heldRockMesh.visible = true
             ;(heldRockMesh.material as THREE.MeshStandardMaterial).color.set(
@@ -4642,17 +4929,158 @@ export default function GameCanvas() {
           }
         }
 
+        // --- The Worm spawning & AI ---
+        // Desert-only daytime predator: burrows as a sand mound, paints a red
+        // danger circle, erupts with an instant-kill mouth, then can be baited
+        // above ground and killed with exactly three stabs.
+        const playerInDesert = biomeAt(playerPos.x, playerPos.z) === 'desert'
+        if (!isNightNow && playerInDesert && isWorldAuthority) wormSpawnTimer -= dt
+        if (!isNightNow && playerInDesert && isWorldAuthority && wormSpawnTimer <= 0) {
+          const spawned = spawnWorm()
+          wormSpawnTimer = spawned ? 320 + Math.random() * 220 : 45 + Math.random() * 45
+        }
+        for (let i = worms.length - 1; i >= 0; i--) {
+          const w = worms[i]
+          if (isNightNow || biomeAt(w.pos.x, w.pos.z) !== 'desert') {
+            removeWorm(w)
+            worms.splice(i, 1)
+            continue
+          }
+
+          const toPlayer = new THREE.Vector3().subVectors(playerPos, w.pos)
+          toPlayer.y = 0
+          const dist = toPlayer.length()
+          if (dist > 0.001) toPlayer.normalize()
+          w.attackCooldown -= dt
+          w.stateTimer -= dt
+          w.crawlPhase += dt * 7.5
+
+          if (w.state === 'dying') {
+            const p = 1 - Math.max(0, w.stateTimer / 1.8)
+            w.warning.visible = false
+            w.mouth.visible = true
+            w.body.visible = true
+            w.mound.visible = false
+            w.mesh.rotation.z = Math.sin(p * Math.PI * 1.3) * 1.05
+            w.mesh.scale.setScalar(Math.max(0.05, 1 - p * 0.85))
+            w.mesh.position.y = w.pos.y + Math.sin(p * Math.PI) * 0.28
+            w.light.intensity = Math.max(0, 1.6 * (1 - p))
+            if (w.stateTimer <= 0) {
+              const px = w.pos.x, py = heightAt(w.pos.x, w.pos.z), pz = w.pos.z
+              removeWorm(w)
+              worms.splice(i, 1)
+              state.addXp(180)
+              state.addZombieKill()
+              dropItemToWorld('glowstone', 1, px, py + 0.55, pz)
+            }
+            continue
+          }
+
+          if (w.state === 'burrowing') {
+            w.mound.visible = true
+            w.body.visible = false
+            w.mouth.visible = false
+            w.light.intensity = 0
+            w.vel.x = toPlayer.x * WORM_SPEED
+            w.vel.z = toPlayer.z * WORM_SPEED
+            w.pos.x += w.vel.x * dt
+            w.pos.z += w.vel.z * dt
+            w.pos.y = heightAt(w.pos.x, w.pos.z)
+            w.mesh.position.set(w.pos.x, w.pos.y + Math.sin(w.crawlPhase) * 0.025, w.pos.z)
+            w.mesh.rotation.y = Math.atan2(toPlayer.x, toPlayer.z)
+            w.mound.rotation.z = Math.sin(w.crawlPhase) * 0.08
+            if (dist < WORM_TRIGGER_RANGE && w.attackCooldown <= 0) {
+              w.state = 'warning'
+              w.stateTimer = 1.15
+              w.warningTarget.set(playerPos.x, heightAt(playerPos.x, playerPos.z), playerPos.z)
+              w.warning.position.set(w.warningTarget.x, w.warningTarget.y + 0.04, w.warningTarget.z)
+              w.warning.visible = true
+              w.vel.set(0, 0, 0)
+              state.showToast('🔴 Red circle! Move — The Worm is below you!')
+            }
+          } else if (w.state === 'warning') {
+            w.mesh.position.set(w.warningTarget.x, w.warningTarget.y, w.warningTarget.z)
+            w.pos.copy(w.warningTarget)
+            w.mound.visible = true
+            w.body.visible = false
+            w.mouth.visible = false
+            w.warning.visible = true
+            const pulse = 0.42 + Math.abs(Math.sin(performance.now() * 0.015)) * 0.34
+            ;(w.warning.material as THREE.MeshBasicMaterial).opacity = pulse
+            w.warning.scale.setScalar(1 + Math.sin(performance.now() * 0.018) * 0.04)
+            if (w.stateTimer <= 0) {
+              w.state = 'mouth'
+              w.stateTimer = 1.35
+              w.attackCooldown = 5.5
+              w.mound.visible = false
+              w.mouth.visible = true
+              w.body.visible = false
+              w.light.intensity = 2.1
+              w.mesh.rotation.y = Math.atan2(playerPos.x - w.pos.x, playerPos.z - w.pos.z)
+            }
+          } else if (w.state === 'mouth') {
+            w.warning.visible = true
+            ;(w.warning.material as THREE.MeshBasicMaterial).opacity = 0.72
+            w.mouth.visible = true
+            w.mouth.scale.setScalar(1 + Math.sin(performance.now() * 0.02) * 0.08)
+            w.mesh.position.set(w.pos.x, heightAt(w.pos.x, w.pos.z) + Math.sin(Math.max(0, w.stateTimer) * 8) * 0.025, w.pos.z)
+            const px = playerPos.x - w.pos.x
+            const pz = playerPos.z - w.pos.z
+            if (px * px + pz * pz < WORM_LETHAL_RADIUS * WORM_LETHAL_RADIUS && useGame.getState().mode !== 'dead') {
+              state.takeDamage(9999)
+              state.showToast('☠️ The Worm swallowed you whole!')
+            }
+            if (w.stateTimer <= 0) {
+              w.state = 'burrowing'
+              w.warning.visible = false
+              w.mouth.visible = false
+              w.mound.visible = true
+              w.light.intensity = 0
+            }
+          } else if (w.state === 'emerged') {
+            w.warning.visible = false
+            w.mound.visible = false
+            w.body.visible = true
+            w.mouth.visible = true
+            const STANDOFF = 1.6
+            const speedScale = dist > STANDOFF ? 1 : Math.max(0, (dist - 1.1) / 0.5)
+            w.vel.x = toPlayer.x * WORM_SPEED * 0.72 * speedScale
+            w.vel.z = toPlayer.z * WORM_SPEED * 0.72 * speedScale
+            w.pos.x += w.vel.x * dt
+            w.pos.z += w.vel.z * dt
+            w.pos.y = heightAt(w.pos.x, w.pos.z)
+            collideEnemy(w.pos, 0.65)
+            w.mesh.position.copy(w.pos)
+            w.mesh.rotation.y = Math.atan2(playerPos.x - w.pos.x, playerPos.z - w.pos.z)
+            w.body.rotation.x = Math.sin(w.crawlPhase) * 0.09
+            w.mouth.rotation.x = Math.sin(w.crawlPhase * 1.3) * 0.08
+            w.light.intensity = 1.25 + Math.sin(performance.now() * 0.01) * 0.25
+            if (w.hurtTimer > 0) {
+              w.hurtTimer -= dt
+              w.mesh.scale.setScalar(1 + Math.sin(w.hurtTimer * 34) * 0.06)
+            } else {
+              w.mesh.scale.setScalar(1)
+            }
+          }
+        }
+
         // --- Goblin spawning & AI ---
-        // Goblins appear on the surface at night, sprint in, steal one inventory
-        // stack, then bolt. Kill before they escape to recover the loot.
-        if (isNightNow && isWorldAuthority) goblinSpawnTimer -= dt
-        if (isNightNow && isWorldAuthority && goblinSpawnTimer <= 0) {
-          // Next goblin sighting: 4–8 minutes later.
+        // Goblins appear only during the day in forest biomes, sprint in, steal
+        // one inventory stack, then bolt. Kill before they escape to recover it.
+        const playerInForest = biomeAt(playerPos.x, playerPos.z) === 'forest'
+        if (!isNightNow && playerInForest && isWorldAuthority) goblinSpawnTimer -= dt
+        if (!isNightNow && playerInForest && isWorldAuthority && goblinSpawnTimer <= 0) {
+          // Next goblin sighting: 4–8 minutes later, and only while in forests.
           goblinSpawnTimer = 240 + Math.random() * 240
           spawnGoblin()
         }
         for (let i = goblins.length - 1; i >= 0; i--) {
           const gb = goblins[i]
+          if (isNightNow || biomeAt(gb.pos.x, gb.pos.z) !== 'forest') {
+            removeGoblin(gb)
+            goblins.splice(i, 1)
+            continue
+          }
           // hurt flash
           if (gb.hurtTimer > 0) {
             gb.hurtTimer -= dt
@@ -4836,6 +5264,13 @@ export default function GameCanvas() {
             if (d < bestD) { bestD = d; best = { name: 'Goblin', hp: gb.hp, maxHp: GOBLIN_HEALTH, dist: d, kind: 'goblin' } }
           }
           let boss: { name: string; hp: number; maxHp: number; dist: number; kind: string; state?: string; grabCooldown?: number } | null = null
+          for (const w of worms) {
+            const dx = w.pos.x - playerPos.x
+            const dz = w.pos.z - playerPos.z
+            const d = Math.sqrt(dx * dx + dz * dz)
+            if (!boss || d < boss.dist) boss = { name: 'The Worm', hp: w.hp, maxHp: WORM_HEALTH, dist: d, kind: 'worm', state: w.state }
+            if (d < 32) best = { name: 'The Worm', hp: w.hp, maxHp: WORM_HEALTH, dist: d, kind: 'worm' }
+          }
           for (const o of orcs) {
             const dx = o.pos.x - playerPos.x
             const dz = o.pos.z - playerPos.z
@@ -4957,8 +5392,15 @@ export default function GameCanvas() {
             const gy = heightAt(d.px, d.pz) + 0.2
             if (d.py <= gy) { d.py = gy; d.vy = 0 }
             d.mesh.position.set(d.px, d.py, d.pz)
-            // Logs rest still; cubes spin to catch the eye.
+            // Logs rest still; cubes/crystals spin to catch the eye.
             if (d.id !== 'log') d.mesh.rotation.y += dt * 2
+            if (d.id === 'glowstone') {
+              const glow = (d.mesh as any).__glowstoneLight as THREE.PointLight | undefined
+              const core = (d.mesh as any).__glowstoneCore as THREE.Object3D | undefined
+              if (glow) glow.intensity = 1.15 + Math.sin(performance.now() * 0.008) * 0.28
+              if (core) core.rotation.x += dt * 0.8
+              d.mesh.position.y += Math.sin(performance.now() * 0.006 + d.px) * 0.025
+            }
             // Despawn warning: rapid flicker in the last 5 seconds of life
             if (d.life < 5) {
               d.mesh.visible = Math.floor(d.life * 6) % 2 === 0
@@ -5107,6 +5549,14 @@ export default function GameCanvas() {
         }
         // No enemy in range — holy water was already consumed above.
         useGame.getState().showToast('💧 Holy water splashed harmlessly')
+        return
+      }
+
+      // Check The Worm. Hitting the exposed mouth forces it above ground;
+      // once emerged, each successful stab counts as one of the three kill hits.
+      const wormHit = findWormHit(raycaster)
+      if (wormHit) {
+        damageWorm(wormHit.worm)
         return
       }
 

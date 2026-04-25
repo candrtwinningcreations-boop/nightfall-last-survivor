@@ -5,6 +5,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   log: { id: 'log', name: 'Raw Log', icon: '🪵', image: '/items/log.png', stack: 32, description: 'A whole felled log. Chop down into 4 Wood Planks at the crafting bench.', color: '#5a3720' },
   stone: { id: 'stone', name: 'Stone', icon: '🪨', image: '/items/stone.png', stack: 64, description: 'Mined from boulders with a pickaxe, or picked up off the ground.', color: '#9ca3af' },
   sap: { id: 'sap', name: 'Cactus Sap', icon: '🟠', image: '/items/sap.png', stack: 64, description: 'Sticky amber-gold desert sap harvested from cactus plants. Used for beds and survival crafting.', color: '#f59e0b' },
+  glowstone: { id: 'glowstone', name: 'Glowstone', icon: '💎', image: '/items/glowstone.svg', stack: 16, description: 'A luminous crystal-gem dropped by The Worm. It hums with cold desert light.', color: '#67e8f9' },
 
   // Stone tools
   stone_pickaxe: { id: 'stone_pickaxe', name: 'Stone Pickaxe', icon: '⛏️', image: '/items/stone_pickaxe.png', stack: 1, damage: 15, tool: 'pickaxe', tier: 1, description: 'Mines stone and raw iron. 15 damage.', color: '#a1a1aa' },
