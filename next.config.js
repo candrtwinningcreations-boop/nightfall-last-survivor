@@ -1,9 +1,16 @@
 const path = require('path');
 
+const requestedOutputMode = process.env.NEXT_OUTPUT_MODE;
+const isSupportedOutputMode = requestedOutputMode === 'standalone' || requestedOutputMode === 'export';
+
+// Vercel handles Next.js output automatically.
+// Forcing custom output modes there (especially "standalone") can lead to deploy-time 404 routing.
+const outputMode = process.env.VERCEL ? undefined : (isSupportedOutputMode ? requestedOutputMode : undefined);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
-  output: process.env.NEXT_OUTPUT_MODE,
+  output: outputMode,
   productionBrowserSourceMaps: false,
   experimental: {
     outputFileTracingRoot: path.join(__dirname, '../'),
