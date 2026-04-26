@@ -27,7 +27,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       const isOwner =
         (identity.kind === 'user' && server.ownerId === identity.userId) ||
         (identity.kind === 'guest' && server.ownerGuestId === identity.guestId)
-      const isFriend = server.friends.some((f) => f.friendKey === identity.key)
+      const isFriend = server.friends.some((f: (typeof server.friends)[number]) => f.friendKey === identity.key)
       if (!isOwner && !isFriend) {
         return NextResponse.json({ error: 'Not on friends list for this server' }, { status: 403 })
       }
