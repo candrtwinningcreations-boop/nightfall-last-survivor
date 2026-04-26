@@ -1,9 +1,6 @@
 import { Download, ExternalLink, Link as LinkIcon, MonitorDown, RefreshCw, ShieldCheck, Users } from 'lucide-react'
-import { headers } from 'next/headers'
 import fs from 'fs'
 import path from 'path'
-
-export const dynamic = 'force-dynamic'
 
 const launcherFileName = 'Nightfall-Last-Survivor-Windows.exe'
 const launcherPath = `/downloads/${launcherFileName}`
@@ -18,14 +15,6 @@ function formatBytes(bytes: number) {
     unitIndex += 1
   }
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
-}
-
-function getOrigin() {
-  const h = headers()
-  const host = h.get('x-forwarded-host') || h.get('host')
-  const protocol = h.get('x-forwarded-proto') || 'https'
-  if (!host) return ''
-  return `${protocol}://${host}`
 }
 
 function getLauncherInfo() {
@@ -46,9 +35,8 @@ function getLauncherInfo() {
 }
 
 export default function DownloadPage() {
-  const origin = getOrigin()
-  const downloadUrl = `${origin}${launcherPath}`
-  const shareUrl = `${origin}/download`
+  const downloadUrl = launcherPath
+  const shareUrl = '/download'
   const launcher = getLauncherInfo()
 
   return (

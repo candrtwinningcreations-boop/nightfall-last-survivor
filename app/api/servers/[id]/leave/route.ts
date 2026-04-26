@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { isDatabaseConfigured, prisma } from '@/lib/db'
 import { getIdentity } from '@/lib/identity'
 
 export const dynamic = 'force-dynamic'
 
-// Called via navigator.sendBeacon on unload, or via explicit Leave Server button.
-// Idempotent: deletes this identity's membership for the given server if present.
-// navigator.sendBeacon sends as Content-Type: text/plain, so we parse body as text.
 async function parseBody(req: Request): Promise<any> {
   const ct = req.headers.get('content-type') || ''
   try {
@@ -21,15 +18,23 @@ async function parseBody(req: Request): Promise<any> {
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
+    if (!isDatabaseConfigured()) {
+      return NextResponse.json({ ok: true, offline: true })
+    }
+
     const body = await parseBody(req)
     const identity = await getIdentity(req, body)
     if (identity) {
-      await prisma.serverMember.deleteMany({
-        where: { serverId: params.id, memberKey: identity.key },
-      })
+      try {
+        await prisma.serverMember.deleteMany({
+          where: { serverId: params.id, memberKey: identity.key },
+        })
+      } catch (error) {
+        console.warn('Nightfall leave: membership delete failed', error)
+      }
     }
     return NextResponse.json({ ok: true })
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: 'leave_failed' }, { status: 500 })
   }
 }

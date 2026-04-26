@@ -55,6 +55,7 @@ export default function PlayClient() {
   const guestNameRef = useRef<string | null>(null)
 
   // Auth/server gate. Must run before anything else.
+  // If multiplayer database calls fail, guests can still play offline.
   useEffect(() => {
     if (status === 'loading') return
     const isGuest = typeof window !== 'undefined' && localStorage.getItem('nightfall:guest') === '1'
@@ -62,14 +63,10 @@ export default function PlayClient() {
       router.replace('/')
       return
     }
+
     const sid = typeof window !== 'undefined' ? localStorage.getItem('nightfall:serverId') : null
     const sname = typeof window !== 'undefined' ? localStorage.getItem('nightfall:serverName') : null
-    if (!sid) {
-      router.replace('/servers')
-      return
-    }
-    serverIdRef.current = sid
-    setServerName(sname || 'Unknown Server')
+
     if (isGuest) {
       // Get or make a stable guest id + display name
       let gid = localStorage.getItem('nightfall:guestId')
@@ -85,7 +82,25 @@ export default function PlayClient() {
       guestIdRef.current = gid
       guestNameRef.current = gname
     }
-    // Announce join to the server so our slot is reserved and we show up in presence
+
+    // If no server is selected, let guest users continue in offline mode.
+    if (!sid) {
+      if (isGuest) {
+        serverIdRef.current = null
+        setServerName('Offline (Guest Mode)')
+        setPlayerCount(1)
+        setAuthed(true)
+        return
+      }
+      router.replace('/servers')
+      return
+    }
+
+    serverIdRef.current = sid
+    setServerName(sname || 'Unknown Server')
+
+    // Announce join to the server so our slot is reserved and we show up in presence.
+    // If join fails (db unavailable), guests continue in offline mode.
     fetch(`/api/servers/${encodeURIComponent(sid)}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -98,15 +113,36 @@ export default function PlayClient() {
         const msg = await r.text().catch(() => '')
         // eslint-disable-next-line no-console
         console.warn('Nightfall: failed to join server', r.status, msg)
+        if (isGuest) {
+          serverIdRef.current = null
+          setServerName('Offline (Guest Mode)')
+          setPlayerCount(1)
+          setAuthed(true)
+          return
+        }
         router.replace('/servers')
         return
       }
       const data = await r.json().catch(() => null)
+      if (data?.offline) {
+        serverIdRef.current = null
+        setServerName('Offline (Guest Mode)')
+        setPlayerCount(1)
+      }
       if (data?.identity?.key) {
         try { (window as any).__nightfallMemberKey = data.identity.key } catch {}
       }
       setAuthed(true)
-    }).catch(() => setAuthed(true))
+    }).catch(() => {
+      if (isGuest) {
+        serverIdRef.current = null
+        setServerName('Offline (Guest Mode)')
+        setPlayerCount(1)
+        setAuthed(true)
+        return
+      }
+      router.replace('/servers')
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status])
 

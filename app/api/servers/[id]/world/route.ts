@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { isDatabaseConfigured, prisma } from '@/lib/db'
 import { getIdentity } from '@/lib/identity'
 
 export const dynamic = 'force-dynamic'
@@ -60,42 +60,76 @@ async function assertAllowed(req: Request, body: any, serverId: string) {
   const identity = await getIdentity(req, body)
   if (!identity) return { error: NextResponse.json({ error: 'Identity required' }, { status: 401 }) }
 
-  const server = await prisma.server.findUnique({
-    where: { id: serverId },
-    include: { friends: { select: { friendKey: true } } },
-  })
-  if (!server) return { error: NextResponse.json({ error: 'not_found' }, { status: 404 }) }
-  if (server.isPrivate) {
-    const isOwner =
-      (identity.kind === 'user' && server.ownerId === identity.userId) ||
-      (identity.kind === 'guest' && server.ownerGuestId === identity.guestId)
-    const isFriend = server.friends.some((f: (typeof server.friends)[number]) => f.friendKey === identity.key)
-    if (!isOwner && !isFriend) return { error: NextResponse.json({ error: 'forbidden' }, { status: 403 }) }
+  try {
+    const server = await prisma.server.findUnique({
+      where: { id: serverId },
+      include: { friends: { select: { friendKey: true } } },
+    })
+    if (!server) return { error: NextResponse.json({ error: 'not_found' }, { status: 404 }) }
+    if (server.isPrivate) {
+      const isOwner =
+        (identity.kind === 'user' && server.ownerId === identity.userId) ||
+        (identity.kind === 'guest' && server.ownerGuestId === identity.guestId)
+      const isFriend = server.friends.some((f: (typeof server.friends)[number]) => f.friendKey === identity.key)
+      if (!isOwner && !isFriend) return { error: NextResponse.json({ error: 'forbidden' }, { status: 403 }) }
+    }
+    return { identity }
+  } catch (error) {
+    console.warn('Nightfall world sync: failed to validate server access', error)
+    return { error: NextResponse.json({ error: 'database_unavailable' }, { status: 503 }) }
   }
-  return { identity }
 }
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
     const body = await req.json().catch(() => ({}))
+    const sinceRevision = Number(body?.sinceRevision || 0)
+    const now = Date.now()
+
+    if (!isDatabaseConfigured()) {
+      return NextResponse.json({
+        ok: true,
+        offline: true,
+        revision: sinceRevision,
+        authorityId: null,
+        authorityUntil: now + AUTHORITY_TTL_MS,
+        timeOfDay: 0.25,
+        events: [],
+        snapshot: { entities: [] },
+      })
+    }
+
     const allowed = await assertAllowed(req, body, params.id)
     if ('error' in allowed) return allowed.error
 
     const clientId = String(body?.clientId || allowed.identity.key)
-    const sinceRevision = Number(body?.sinceRevision || 0)
     const slot = `world_server_${params.id}`
-    const now = Date.now()
 
-    const save = await prisma.playerSave.upsert({
-      where: { slot },
-      create: {
-        slot,
-        serverId: params.id,
-        inventoryJson: JSON.stringify(defaultWorld()),
+    let save: any = null
+    try {
+      save = await prisma.playerSave.upsert({
+        where: { slot },
+        create: {
+          slot,
+          serverId: params.id,
+          inventoryJson: JSON.stringify(defaultWorld()),
+          timeOfDay: 0.25,
+        },
+        update: {},
+      })
+    } catch (error) {
+      console.warn('Nightfall world sync: failed to upsert world save, offline fallback', error)
+      return NextResponse.json({
+        ok: true,
+        offline: true,
+        revision: sinceRevision,
+        authorityId: null,
+        authorityUntil: now + AUTHORITY_TTL_MS,
         timeOfDay: 0.25,
-      },
-      update: {},
-    })
+        events: [],
+        snapshot: { entities: [] },
+      })
+    }
 
     const world = parseWorld(save.inventoryJson)
     if (!world.createdAt) world.createdAt = now
@@ -125,13 +159,17 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     if (world.events.length > MAX_EVENTS) world.events = world.events.slice(world.events.length - MAX_EVENTS)
     const timeOfDay = timeOfDayFor(world.createdAt, now)
 
-    await prisma.playerSave.update({
-      where: { slot },
-      data: {
-        inventoryJson: JSON.stringify(world),
-        timeOfDay,
-      },
-    })
+    try {
+      await prisma.playerSave.update({
+        where: { slot },
+        data: {
+          inventoryJson: JSON.stringify(world),
+          timeOfDay,
+        },
+      })
+    } catch (error) {
+      console.warn('Nightfall world sync: failed to persist world state', error)
+    }
 
     return NextResponse.json({
       ok: true,

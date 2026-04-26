@@ -1,6 +1,8 @@
 import { Skull, Swords, Hammer, Moon, Sun, Axe, MonitorDown } from 'lucide-react'
 import { AuthPanel } from './auth-panel'
 
+export const dynamic = 'force-static'
+
 export default function Home() {
   return (
     <main className="min-h-screen relative overflow-hidden bg-[#0a0a0f] text-white">

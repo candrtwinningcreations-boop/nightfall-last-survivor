@@ -13,7 +13,6 @@ export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
       name: 'Credentials',
-      // Accept either username (primary UX) or email (fallback / test harness).
       credentials: {
         username: { label: 'Username', type: 'text' },
         email: { label: 'Email', type: 'email' },
@@ -22,20 +21,28 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!dbConfigured) return null
         if (!credentials?.password) return null
+
         const rawIdentifier =
           (credentials.username && String(credentials.username)) ||
           (credentials.email && String(credentials.email)) ||
           ''
         const ident = rawIdentifier.trim().toLowerCase()
         if (!ident) return null
-        const isEmail = ident.includes('@')
-        const user = isEmail
-          ? await prisma.user.findFirst({ where: { email: ident } })
-          : await prisma.user.findUnique({ where: { username: ident } })
-        if (!user) return null
-        const ok = await bcrypt.compare(credentials.password, user.passwordHash)
-        if (!ok) return null
-        return { id: user.id, name: user.username, email: user.email ?? undefined }
+
+        try {
+          const isEmail = ident.includes('@')
+          const user = isEmail
+            ? await prisma.user.findFirst({ where: { email: ident } })
+            : await prisma.user.findUnique({ where: { username: ident } })
+          if (!user) return null
+
+          const ok = await bcrypt.compare(credentials.password, user.passwordHash)
+          if (!ok) return null
+          return { id: user.id, name: user.username, email: user.email ?? undefined }
+        } catch (error) {
+          console.warn('Nightfall auth authorize failed; database unavailable', error)
+          return null
+        }
       },
     }),
   ],
