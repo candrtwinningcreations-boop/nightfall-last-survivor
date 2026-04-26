@@ -69,7 +69,7 @@ async function assertAllowed(req: Request, body: any, serverId: string) {
     const isOwner =
       (identity.kind === 'user' && server.ownerId === identity.userId) ||
       (identity.kind === 'guest' && server.ownerGuestId === identity.guestId)
-    const isFriend = server.friends.some((f) => f.friendKey === identity.key)
+    const isFriend = server.friends.some((f: (typeof server.friends)[number]) => f.friendKey === identity.key)
     if (!isOwner && !isFriend) return { error: NextResponse.json({ error: 'forbidden' }, { status: 403 }) }
   }
   return { identity }
