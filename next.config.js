@@ -7,9 +7,13 @@ const isSupportedOutputMode = requestedOutputMode === 'standalone' || requestedO
 // Forcing custom output modes there (especially "standalone") can lead to deploy-time 404 routing.
 const outputMode = process.env.VERCEL ? undefined : (isSupportedOutputMode ? requestedOutputMode : undefined);
 
+// Keep Vercel on the framework default dist directory (.next) even if NEXT_DIST_DIR is set.
+// A custom distDir on Vercel can cause the runtime to miss built routes and surface 404s.
+const distDir = process.env.VERCEL ? '.next' : (process.env.NEXT_DIST_DIR || '.next');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  distDir: process.env.NEXT_DIST_DIR || '.next',
+  distDir,
   output: outputMode,
   productionBrowserSourceMaps: false,
   experimental: {

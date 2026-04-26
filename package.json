@@ -6,6 +6,7 @@
     "build": "prisma generate && node scripts/write-build-version.cjs && next build",
     "postinstall": "prisma generate",
     "start": "next start",
+    "test:routes": "node scripts/route-smoke-test.cjs",
     "lint": "next lint",
     "desktop:dev": "electron .",
     "build:desktop-config": "node scripts/write-desktop-config.cjs",
