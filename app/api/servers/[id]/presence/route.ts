@@ -103,7 +103,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({
       ok: true,
       total: total + (identity ? 0 : 1),
-      players: others.map((m) => ({
+      players: others.map((m: (typeof others)[number]) => ({
         id: m.memberKey,
         name: m.user?.username ?? m.guestName ?? 'Guest',
         posX: m.posX,

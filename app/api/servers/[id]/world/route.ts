@@ -107,7 +107,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const isAuthority = world.authorityId === clientId
 
     const incomingEvents = Array.isArray(body?.events) ? body.events : []
-    const knownIds = new Set(world.events.map((e) => e.id))
+    const knownIds = new Set(world.events.map((e: StoredWorldEvent) => e.id))
     for (const evt of incomingEvents) {
       if (!evt || typeof evt.id !== 'string' || knownIds.has(evt.id)) continue
       if (typeof evt.type !== 'string') continue
@@ -139,7 +139,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       authorityId: world.authorityId,
       authorityUntil: world.authorityUntil,
       timeOfDay,
-      events: world.events.filter((e) => e.revision > sinceRevision),
+      events: world.events.filter((e: StoredWorldEvent) => e.revision > sinceRevision),
       snapshot: world.snapshot ?? { entities: [] },
     })
   } catch (e) {

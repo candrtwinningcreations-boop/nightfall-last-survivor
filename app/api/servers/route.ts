@@ -7,6 +7,8 @@ export const dynamic = 'force-dynamic'
 // Players whose heartbeat is older than this many seconds are treated as offline.
 const HEARTBEAT_TTL_SEC = 15
 
+type FriendToken = ReturnType<typeof parseFriendToken>
+
 export async function GET(req: Request) {
   try {
     const identity = await getIdentity(req)
@@ -65,7 +67,7 @@ export async function GET(req: Request) {
       })
 
       privateServers = [
-        ...owned.map((s) => ({
+        ...owned.map((s: (typeof owned)[number]) => ({
           id: s.id,
           slotNumber: s.slotNumber,
           name: s.name,
@@ -75,13 +77,13 @@ export async function GET(req: Request) {
           isOwner: true,
           ownerUsername: s.owner ? null : (s.ownerGuestName ?? null),
           ownerGuest: !s.ownerId,
-          friends: s.friends.map((f) => ({
+          friends: s.friends.map((f: (typeof s.friends)[number]) => ({
             kind: (f.userId ? 'user' : 'guest') as 'user' | 'guest',
             name: f.userId ? (f.user?.username ?? '?') : (f.guestName || 'Guest'),
             id: f.userId ?? f.guestId ?? '',
           })),
         })),
-        ...allowedServers.map((s) => ({
+        ...allowedServers.map((s: (typeof allowedServers)[number]) => ({
           id: s.id,
           slotNumber: s.slotNumber,
           name: s.name,
@@ -97,7 +99,7 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({
-      public: publicServers.map((s) => ({
+      public: publicServers.map((s: (typeof publicServers)[number]) => ({
         id: s.id,
         slotNumber: s.slotNumber,
         name: s.name,
@@ -123,17 +125,17 @@ export async function POST(req: Request) {
     }
     const name = String(body?.name ?? '').trim().slice(0, 40) || 'Private Server'
     const tokensRaw: unknown[] = Array.isArray(body?.friends) ? body.friends : []
-    const tokens = tokensRaw.map((s) => parseFriendToken(String(s ?? '')))
+    const tokens = tokensRaw.map((s: unknown) => parseFriendToken(String(s ?? '')))
 
     const usernames = tokens
-      .filter((t): t is { kind: 'username'; username: string } => t.kind === 'username')
-      .map((t) => t.username)
+      .filter((t: FriendToken): t is { kind: 'username'; username: string } => t.kind === 'username')
+      .map((t: { kind: 'username'; username: string }) => t.username)
     const guestIds = tokens
-      .filter((t): t is { kind: 'guestId'; guestId: string } => t.kind === 'guestId')
-      .map((t) => t.guestId)
+      .filter((t: FriendToken): t is { kind: 'guestId'; guestId: string } => t.kind === 'guestId')
+      .map((t: { kind: 'guestId'; guestId: string }) => t.guestId)
     const invalid = tokens
-      .filter((t): t is { kind: 'invalid'; raw: string } => t.kind === 'invalid' && !!t.raw.trim())
-      .map((t) => t.raw)
+      .filter((t: FriendToken): t is { kind: 'invalid'; raw: string } => t.kind === 'invalid' && !!t.raw.trim())
+      .map((t: { kind: 'invalid'; raw: string }) => t.raw)
 
     // Resolve usernames to user IDs
     const friendUsers = usernames.length
@@ -153,11 +155,11 @@ export async function POST(req: Request) {
         ownerGuestName: identity.kind === 'guest' ? identity.guestName : null,
         friends: {
           create: [
-            ...friendUsers.map((u) => ({
+            ...friendUsers.map((u: (typeof friendUsers)[number]) => ({
               userId: u.id,
               friendKey: `u:${u.id}`,
             })),
-            ...guestIds.map((gid) => ({
+            ...guestIds.map((gid: string) => ({
               guestId: gid,
               guestName: 'Guest',
               friendKey: `g:${gid}`,
@@ -167,12 +169,12 @@ export async function POST(req: Request) {
       },
     })
 
-    const missingUsernames = usernames.filter((n) => !friendUsers.find((u) => u.username === n))
+    const missingUsernames = usernames.filter((n: string) => !friendUsers.find((u: (typeof friendUsers)[number]) => u.username === n))
     return NextResponse.json({
       ok: true,
       serverId: server.id,
       added: [
-        ...friendUsers.map((u) => u.username),
+        ...friendUsers.map((u: (typeof friendUsers)[number]) => u.username),
         ...guestIds,
       ],
       missing: [...missingUsernames, ...invalid],

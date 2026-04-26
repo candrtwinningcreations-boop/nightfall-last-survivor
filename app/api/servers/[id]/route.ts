@@ -4,6 +4,8 @@ import { getIdentity, parseFriendToken } from '@/lib/identity'
 
 export const dynamic = 'force-dynamic'
 
+type FriendToken = ReturnType<typeof parseFriendToken>
+
 function isOwner(server: { ownerId: string | null; ownerGuestId: string | null }, identity: { kind: 'user'; userId: string } | { kind: 'guest'; guestId: string }) {
   if (identity.kind === 'user') return server.ownerId === identity.userId
   return server.ownerGuestId === identity.guestId
@@ -23,17 +25,17 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     }
 
     const tokensRaw: unknown[] = Array.isArray(body?.friends) ? body.friends : []
-    const tokens = tokensRaw.map((s) => parseFriendToken(String(s ?? '')))
+    const tokens = tokensRaw.map((s: unknown) => parseFriendToken(String(s ?? '')))
 
     const usernames = tokens
-      .filter((t): t is { kind: 'username'; username: string } => t.kind === 'username')
-      .map((t) => t.username)
+      .filter((t: FriendToken): t is { kind: 'username'; username: string } => t.kind === 'username')
+      .map((t: { kind: 'username'; username: string }) => t.username)
     const guestIds = tokens
-      .filter((t): t is { kind: 'guestId'; guestId: string } => t.kind === 'guestId')
-      .map((t) => t.guestId)
+      .filter((t: FriendToken): t is { kind: 'guestId'; guestId: string } => t.kind === 'guestId')
+      .map((t: { kind: 'guestId'; guestId: string }) => t.guestId)
     const invalid = tokens
-      .filter((t): t is { kind: 'invalid'; raw: string } => t.kind === 'invalid' && !!t.raw.trim())
-      .map((t) => t.raw)
+      .filter((t: FriendToken): t is { kind: 'invalid'; raw: string } => t.kind === 'invalid' && !!t.raw.trim())
+      .map((t: { kind: 'invalid'; raw: string }) => t.raw)
 
     const friendUsers = usernames.length
       ? await prisma.user.findMany({
@@ -45,12 +47,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     // Wipe existing and recreate — the list is a full replacement.
     await prisma.serverFriend.deleteMany({ where: { serverId: server.id } })
     const toCreate = [
-      ...friendUsers.map((u) => ({
+      ...friendUsers.map((u: (typeof friendUsers)[number]) => ({
         serverId: server.id,
         userId: u.id,
         friendKey: `u:${u.id}`,
       })),
-      ...guestIds.map((gid) => ({
+      ...guestIds.map((gid: string) => ({
         serverId: server.id,
         guestId: gid,
         guestName: 'Guest',
@@ -64,10 +66,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       })
     }
 
-    const missingUsernames = usernames.filter((n) => !friendUsers.find((u) => u.username === n))
+    const missingUsernames = usernames.filter((n: string) => !friendUsers.find((u: (typeof friendUsers)[number]) => u.username === n))
     return NextResponse.json({
       ok: true,
-      friends: [...friendUsers.map((u) => u.username), ...guestIds],
+      friends: [...friendUsers.map((u: (typeof friendUsers)[number]) => u.username), ...guestIds],
       missing: [...missingUsernames, ...invalid],
     })
   } catch (e) {
