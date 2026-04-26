@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { TORCH_MAX_DURABILITY_SEC, useGame } from '@/lib/game/store'
 import { heightAt, hash2Pub } from '@/lib/game/noise'
 import { FIST_DAMAGE, ITEMS, rollShirtRarity } from '@/lib/game/items'
@@ -27,13 +28,15 @@ const ZOMBIE_HEALTH = 50
 const ZOMBIE_DAMAGE = 8
 const ZOMBIE_ATTACK_RANGE = 1.8
 const MAX_ZOMBIES = 8
-// Zombies should feel like the common night threat. Keep their average spawn
-// delay a little below vampires (34–64s vs. vampires' 48–78s) without making
-// the horde overwhelming.
-const ZOMBIE_SPAWN_MIN_DELAY = 34
-const ZOMBIE_SPAWN_RANDOM_DELAY = 30
-const VAMPIRE_SPAWN_MIN_DELAY = 48
-const VAMPIRE_SPAWN_RANDOM_DELAY = 30
+// Zombies are the primary night pressure now: target comfortably above
+// 5 spawns per full night cycle without overwhelming early players.
+const ZOMBIE_SPAWN_MIN_DELAY = 22
+const ZOMBIE_SPAWN_RANDOM_DELAY = 16
+// Vampires remain rarer than zombies, but we still guarantee at least one
+// encounter per night cycle for pacing.
+const VAMPIRE_SPAWN_MIN_DELAY = 34
+const VAMPIRE_SPAWN_RANDOM_DELAY = 26
+const VAMPIRE_FORCED_FIRST_SPAWN_SEC = 150
 const BOSS_HEALTH_BAR_RENDER_RANGE_METERS = 75
 const TORCH_ATTACK_DURABILITY_COST_SEC = 2 * 60
 const TORCH_DURABILITY_PERSIST_INTERVAL_MS = 5000
@@ -54,13 +57,15 @@ const VAMPIRE_HEALTH = 180
 const VAMPIRE_DAMAGE = 18
 const VAMPIRE_ATTACK_RANGE = 2.2
 const MAX_VAMPIRES = 2
-// Goblins: pint-sized daytime forest thieves. They sprint in, snatch
-// one random stack from the player's inventory, then bolt for the tree-line.
-// Slay them before they escape to recover your loot.
+// Goblins: pint-sized daytime thieves. We keep them sparse but ensure at
+// least one pressure event per daytime cycle.
 const GOBLIN_SPEED = 5.2
 const GOBLIN_HEALTH = 28
 const GOBLIN_ATTACK_RANGE = 1.1
 const MAX_GOBLINS = 1
+const GOBLIN_SPAWN_MIN_DELAY = 110
+const GOBLIN_SPAWN_RANDOM_DELAY = 90
+const GOBLIN_FORCED_FIRST_SPAWN_SEC = 180
 // The Worm: desert day boss. It burrows under sand, telegraphs a lethal
 // mouth eruption, then can be forced above ground and killed with real weapons.
 const WORM_SPEED = 2.65
@@ -139,7 +144,7 @@ type ChunkData = {
   trees: { mesh: THREE.Object3D; hp: number; px: number; pz: number; collider: boolean }[]
   stones: { mesh: THREE.Object3D; px: number; py: number; pz: number; hp: number; maxHp: number; oreKind: 'stone' | 'iron'; initialScale: number }[]
   cacti: { mesh: THREE.Object3D; hp: number; px: number; pz: number; collider: boolean }[]
-  caves: { mesh: THREE.Object3D; x: number; y: number; z: number; radius: number; yaw: number }[]
+  caves: { mesh: THREE.Object3D; x: number; y: number; z: number; radius: number; yaw: number; depth: number; canSpawnOrc: boolean }[]
   droppedItems: { netId: string; mesh: THREE.Object3D; id: ItemId; count: number; px: number; py: number; pz: number; vy: number; life: number }[]
   terrain: THREE.Mesh
 }
@@ -435,10 +440,10 @@ export default function GameCanvas() {
     const sapPuddleMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
     const glowstoneCoreMat = new THREE.MeshStandardMaterial({ color: 0xbdfcff, emissive: 0x48f7ff, emissiveIntensity: 1.35, roughness: 0.18, metalness: 0.05, transparent: true, opacity: 0.92 })
     const glowstoneFacetMat = new THREE.MeshStandardMaterial({ color: 0x77e7ff, emissive: 0x1fb6ff, emissiveIntensity: 0.72, roughness: 0.24, metalness: 0.12, transparent: true, opacity: 0.82 })
-    const caveFloorMat = new THREE.MeshStandardMaterial({ color: 0x090a0d, roughness: 1, metalness: 0 })
-    const caveRockMat = new THREE.MeshStandardMaterial({ color: 0x2b2c33, roughness: 0.98, metalness: 0.04 })
-    const caveMouthMat = new THREE.MeshBasicMaterial({ color: 0x020204, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
-    const caveCrystalMat = new THREE.MeshBasicMaterial({ color: 0x5eead4, transparent: true, opacity: 0.82 })
+    const caveFloorMat = new THREE.MeshStandardMaterial({ color: 0x07080b, roughness: 1, metalness: 0 })
+    const caveRockMat = new THREE.MeshStandardMaterial({ color: 0x2a2b30, roughness: 0.99, metalness: 0.02 })
+    const caveRockDarkMat = new THREE.MeshStandardMaterial({ color: 0x14151a, roughness: 1, metalness: 0 })
+    const caveShadowMat = new THREE.MeshBasicMaterial({ color: 0x010102, transparent: true, opacity: 0.92, side: THREE.DoubleSide })
     const bedFrameMat = new THREE.MeshStandardMaterial({ color: 0x5a3720, roughness: 0.92, metalness: 0 })
     const bedRollMat = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, roughness: 0.95, metalness: 0 })
     const pillowMat = new THREE.MeshStandardMaterial({ color: 0xe7d8bf, roughness: 0.9, metalness: 0 })
@@ -473,11 +478,11 @@ export default function GameCanvas() {
     const sapPuddleGeo = new THREE.CircleGeometry(0.28, 24)
     const glowstoneCoreGeo = new THREE.OctahedronGeometry(0.28, 1)
     const glowstoneShardGeo = new THREE.ConeGeometry(0.08, 0.34, 5)
-    const caveFloorGeo = new THREE.CircleGeometry(1, 40)
-    const caveMouthGeo = new THREE.CircleGeometry(1, 32)
-    const caveCrystalGeo = new THREE.ConeGeometry(0.08, 0.42, 6)
-    const caveSpikeGeo = new THREE.ConeGeometry(0.18, 1, 8)
-    const caveRibGeo = new THREE.TorusGeometry(1, 0.08, 8, 18, Math.PI)
+    const caveFloorGeo = new THREE.CircleGeometry(1, 56)
+    const caveTunnelGeo = new THREE.CylinderGeometry(1, 1, 1, 22, 1, true, 0, Math.PI)
+    const caveRingGeo = new THREE.TorusGeometry(1, 0.14, 10, 30, Math.PI)
+    const caveSpikeGeo = new THREE.ConeGeometry(0.22, 1.25, 10)
+    const caveBoulderGeo = new THREE.DodecahedronGeometry(0.58, 0)
     const bedGhostGeo = new THREE.BoxGeometry(1.8, 0.55, 2.4)
     const wallGeo = new THREE.BoxGeometry(2, 2.4, 0.2)
     const floorGeo = new THREE.BoxGeometry(2, 0.15, 2)
@@ -601,9 +606,12 @@ export default function GameCanvas() {
       if (Math.hypot(x, z) < 85) return null
       const y = heightAt(x, z)
       if (y < 0.2 || biomeAt(x, z) === 'desert') return null
-      const radius = 4.8 + hash2Pub(cx * 41 + 9, cz * 73 + 17) * 1.8
+      const radius = 8.2 + hash2Pub(cx * 41 + 9, cz * 73 + 17) * 3.4
+      const depth = 9 + hash2Pub(cx * 229 + 19, cz * 307 + 41) * 6.5
       const yaw = hash2Pub(cx * 97 + 3, cz * 151 + 11) * Math.PI * 2
-      return { x, y, z, radius, yaw }
+      // Every cave gets a deterministic 50% ORC spawn eligibility roll.
+      const canSpawnOrc = hash2Pub(cx * 661 + 7, cz * 809 + 53) < 0.5
+      return { x, y, z, radius, depth, yaw, canSpawnOrc }
     }
 
     function generateChunk(cx: number, cz: number): ChunkData {
@@ -744,92 +752,115 @@ export default function GameCanvas() {
         cacti.push({ mesh: cactus, hp: 8, px: wx, pz: wz, collider: true })
       }
 
-      // Rare cave entrance: an unmistakably dark rocky hollow cut into the
-      // surface. Orc bosses are allowed to spawn only in these cave areas.
+      // Rare cave entrance: heavily overhauled into a much larger, dramatic,
+      // rocky arch inspired by the uploaded reference image.
       if (caveSpec) {
         const cave = new THREE.Group()
-        const floor = new THREE.Mesh(caveFloorGeo, caveFloorMat)
-        floor.rotation.x = -Math.PI / 2
-        floor.scale.set(caveSpec.radius * 1.05, caveSpec.radius * 0.72, 1)
-        floor.position.y = 0.035
-        floor.receiveShadow = true
-        cave.add(floor)
+        const entranceWidth = caveSpec.radius
+        const entranceHeight = caveSpec.radius * 0.82
+        const tunnelDepth = caveSpec.depth
 
-        const mouth = new THREE.Mesh(caveMouthGeo, caveMouthMat)
-        mouth.scale.set(caveSpec.radius * 0.68, caveSpec.radius * 0.48, 1)
-        mouth.position.set(0, 1.15, -caveSpec.radius * 0.42)
-        cave.add(mouth)
+        // Ground apron in front of the cave mouth.
+        const apron = new THREE.Mesh(caveFloorGeo, caveFloorMat)
+        apron.rotation.x = -Math.PI / 2
+        apron.scale.set(entranceWidth * 1.36, entranceWidth * 0.92, 1)
+        apron.position.y = 0.04
+        apron.receiveShadow = true
+        cave.add(apron)
 
-        // Walkable cave interior: a dark tunnel floor continues behind the
-        // entrance, while all detail stays along the sides/ceiling so the
-        // player can physically walk inside rather than hitting a facade.
-        const innerFloor = new THREE.Mesh(caveFloorGeo, caveFloorMat)
-        innerFloor.rotation.x = -Math.PI / 2
-        innerFloor.scale.set(caveSpec.radius * 0.72, caveSpec.radius * 1.12, 1)
-        innerFloor.position.set(0, 0.02, -caveSpec.radius * 0.82)
-        innerFloor.receiveShadow = true
-        cave.add(innerFloor)
-
-        for (let arch = 0; arch < 4; arch++) {
-          const rib = new THREE.Mesh(caveRibGeo, caveRockMat)
-          rib.position.set(0, 0.88 + arch * 0.08, -caveSpec.radius * (0.28 + arch * 0.28))
-          rib.rotation.set(0, 0, Math.PI)
-          rib.scale.set(caveSpec.radius * (0.56 - arch * 0.045), caveSpec.radius * (0.36 - arch * 0.025), 0.9)
-          rib.castShadow = true
-          rib.receiveShadow = true
-          cave.add(rib)
+        // Deep tunnel floor that visibly runs inward so the entrance feels real.
+        for (let seg = 0; seg < 6; seg++) {
+          const floorSeg = new THREE.Mesh(caveFloorGeo, caveFloorMat)
+          floorSeg.rotation.x = -Math.PI / 2
+          const segScale = 1 - seg * 0.09
+          floorSeg.scale.set(entranceWidth * 0.84 * segScale, entranceWidth * 0.62 * segScale, 1)
+          floorSeg.position.set(0, 0.025 + seg * 0.008, -entranceWidth * 0.75 - (seg / 5) * tunnelDepth)
+          floorSeg.receiveShadow = true
+          cave.add(floorSeg)
         }
 
-        for (let r = 0; r < 12; r++) {
-          const a = Math.PI * (0.05 + (r / 11) * 0.9)
-          const sx = Math.cos(a) * caveSpec.radius * (0.88 + rand(r + 404, r + 1) * 0.18)
-          const sz = -Math.sin(a) * caveSpec.radius * 0.62
-          const rock = new THREE.Mesh(stoneGeo, caveRockMat)
-          const rs = 0.7 + rand(r + 701, r + 8) * 1.15
-          rock.scale.set(rs * 1.1, rs * (0.7 + Math.sin(a) * 1.15), rs)
-          rock.position.set(sx, 0.25 + rock.scale.y * 0.22, sz)
+        // Main rocky shell pieces to make a large natural cavern arch.
+        for (let seg = 0; seg < 6; seg++) {
+          const shell = new THREE.Mesh(caveTunnelGeo, seg === 0 ? caveRockDarkMat : caveRockMat)
+          const progress = seg / 5
+          shell.scale.set(
+            entranceWidth * (0.96 - progress * 0.34),
+            entranceHeight * (0.92 - progress * 0.28),
+            tunnelDepth * (0.22 - progress * 0.02),
+          )
+          shell.rotation.z = Math.PI
+          shell.position.set(0, 1.35 + progress * 0.5, -entranceWidth * (0.32 + progress * 0.7))
+          shell.castShadow = true
+          shell.receiveShadow = true
+          cave.add(shell)
+        }
+
+        // Jagged rocky rim around the mouth (no bright/white treatment).
+        const rim = new THREE.Mesh(caveRingGeo, caveRockDarkMat)
+        rim.rotation.x = Math.PI / 2
+        rim.rotation.z = Math.PI
+        rim.scale.set(entranceWidth * 0.76, entranceHeight * 0.68, 1)
+        rim.position.set(0, 1.65, -entranceWidth * 0.3)
+        rim.castShadow = true
+        rim.receiveShadow = true
+        cave.add(rim)
+
+        // Thick boulders around the lip to mimic the dramatic fractured shape.
+        for (let r = 0; r < 28; r++) {
+          const a = Math.PI * (0.02 + (r / 27) * 0.96)
+          const rock = new THREE.Mesh(caveBoulderGeo, r % 3 === 0 ? caveRockDarkMat : caveRockMat)
+          const shellBias = 0.84 + rand(r + 404, r + 1) * 0.46
+          const sx = Math.cos(a) * entranceWidth * shellBias
+          const sy = 0.5 + Math.sin(a) * entranceHeight * (0.72 + rand(r + 12, r + 31) * 0.45)
+          const sz = -Math.sin(a) * entranceWidth * (0.54 + rand(r + 70, r + 90) * 0.22)
+          const rs = 0.62 + rand(r + 701, r + 8) * 1.45
+          rock.scale.set(rs * 1.25, rs * (0.75 + Math.sin(a) * 1.3), rs * 1.1)
+          rock.position.set(sx, sy, sz)
           rock.rotation.set(rand(r, 61) * Math.PI, rand(r, 67) * Math.PI, rand(r, 71) * Math.PI)
           rock.castShadow = true
           rock.receiveShadow = true
           cave.add(rock)
         }
 
-        for (let sidx = 0; sidx < 18; sidx++) {
+        // Stalagmites / stalactites for extra rocky detail and depth cues.
+        for (let sidx = 0; sidx < 30; sidx++) {
           const side = sidx % 2 === 0 ? -1 : 1
-          const depth = -caveSpec.radius * (0.2 + rand(sidx + 140, sidx + 31) * 1.15)
-          const sideOffset = side * caveSpec.radius * (0.44 + rand(sidx + 44, sidx + 81) * 0.28)
-          const spike = new THREE.Mesh(caveSpikeGeo, caveRockMat)
-          const h = 0.45 + rand(sidx + 17, sidx + 33) * 1.05
+          const depth = -entranceWidth * (0.25 + rand(sidx + 140, sidx + 31) * 0.58) - rand(sidx + 700, sidx + 44) * tunnelDepth * 0.7
+          const sideOffset = side * entranceWidth * (0.46 + rand(sidx + 44, sidx + 81) * 0.42)
+          const spike = new THREE.Mesh(caveSpikeGeo, sidx % 5 === 0 ? caveRockDarkMat : caveRockMat)
+          const h = 0.5 + rand(sidx + 17, sidx + 33) * 1.45
           spike.scale.setScalar(h)
-          spike.position.set(sideOffset, 0.05 + h * 0.38, depth)
-          spike.rotation.z = (rand(sidx + 4, sidx + 5) - 0.5) * 0.34
+          spike.position.set(sideOffset, 0.08 + h * 0.44, depth)
+          spike.rotation.z = side * (0.06 + rand(sidx + 4, sidx + 5) * 0.26)
           spike.castShadow = true
           cave.add(spike)
-          if (sidx < 12) {
-            const hang = new THREE.Mesh(caveSpikeGeo, caveRockMat)
-            const hh = 0.32 + rand(sidx + 71, sidx + 93) * 0.75
+          if (sidx < 20) {
+            const hang = new THREE.Mesh(caveSpikeGeo, caveRockDarkMat)
+            const hh = 0.34 + rand(sidx + 71, sidx + 93) * 1.05
             hang.scale.setScalar(hh)
-            hang.position.set(sideOffset * 0.65, 1.85 + rand(sidx + 9, sidx + 10) * 0.35, depth - 0.15)
-            hang.rotation.z = Math.PI + (rand(sidx + 11, sidx + 12) - 0.5) * 0.35
+            hang.position.set(sideOffset * 0.7, 2.2 + rand(sidx + 9, sidx + 10) * 0.95, depth - 0.1)
+            hang.rotation.z = Math.PI + side * (0.08 + rand(sidx + 11, sidx + 12) * 0.26)
             hang.castShadow = true
             cave.add(hang)
           }
         }
 
-        for (let k = 0; k < 7; k++) {
-          const crystal = new THREE.Mesh(caveCrystalGeo, caveCrystalMat)
-          const side = k % 2 === 0 ? -1 : 1
-          crystal.position.set(side * (1.15 + rand(k + 500, k) * 1.15), 0.25, -1.4 - rand(k + 55, k + 4) * 1.5)
-          crystal.rotation.z = (rand(k + 6, k + 7) - 0.5) * 0.5
-          cave.add(crystal)
-        }
+        // Very dark interior disc to sell depth and remove any bright/white read.
+        const shadowDisc = new THREE.Mesh(caveFloorGeo, caveShadowMat)
+        shadowDisc.rotation.x = -Math.PI / 2
+        shadowDisc.scale.set(entranceWidth * 0.66, entranceWidth * 0.48, 1)
+        shadowDisc.position.set(0, 0.08, -entranceWidth * 0.62)
+        cave.add(shadowDisc)
 
-        const glow = new THREE.PointLight(0x1e3a8a, 0.28, caveSpec.radius * 2.0, 2.4)
-        glow.position.set(0, 0.45, -caveSpec.radius * 0.72)
-        cave.add(glow)
-        const entranceMist = new THREE.PointLight(0x0f172a, 0.55, caveSpec.radius * 1.4, 2.8)
-        entranceMist.position.set(0, 0.22, -caveSpec.radius * 0.28)
-        cave.add(entranceMist)
+        const mouthDark = new THREE.Mesh(caveFloorGeo, caveShadowMat)
+        mouthDark.scale.set(entranceWidth * 0.62, entranceHeight * 0.58, 1)
+        mouthDark.position.set(0, 1.45, -entranceWidth * 0.38)
+        cave.add(mouthDark)
+
+        const caveGlow = new THREE.PointLight(0x0b0d11, 0.7, entranceWidth * 2.8, 2.6)
+        caveGlow.position.set(0, 0.5, -entranceWidth * 0.65)
+        cave.add(caveGlow)
+
         cave.position.set(caveSpec.x, caveSpec.y + 0.015, caveSpec.z)
         cave.rotation.y = caveSpec.yaw
         group.add(cave)
@@ -961,7 +992,7 @@ export default function GameCanvas() {
       c.terrain.geometry.dispose()
     }
 
-    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, glowstoneCoreGeo, glowstoneShardGeo, caveFloorGeo, caveMouthGeo, caveCrystalGeo, caveSpikeGeo, caveRibGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
+    const sharedGeos = new Set<THREE.BufferGeometry>([trunkGeo, trunkGeoLarge, leafGeo, leafGeoSphere, pineGeo, stoneGeo, bushGeo, grassBladeGeo, cactusStemGeo, cactusArmGeo, cactusRidgeGeo, sapDropGeo, sapTipGeo, sapPuddleGeo, glowstoneCoreGeo, glowstoneShardGeo, caveFloorGeo, caveTunnelGeo, caveRingGeo, caveSpikeGeo, caveBoulderGeo, bedGhostGeo, wallGeo, floorGeo, dropGeo, logDropBodyGeo, logDropCapGeo, logWallGeo, logFloorGeo, stoneWallGeo, trapBaseGeo, spikeGeo, standPlatformGeo, standLegGeo, rungGeo, furnaceGeo, furnaceMouthGeo, furnaceChimneyGeo])
 
     function updateChunks(px: number, pz: number) {
       const pcx = Math.floor(px / CHUNK_SIZE)
@@ -1287,84 +1318,48 @@ export default function GameCanvas() {
     heldWallMesh.visible = false
     weaponGroup.add(heldWallMesh)
 
-    // --- Improved per-tool weapon detail meshes (full realistic medieval/survival silhouettes) ---
-    // All start invisible; swap logic toggles only the meshes relevant to the equipped tool.
+    // --- Unified weapon meshes ---
+    // Each weapon is merged into one cohesive mesh so blade/guard/handle (and
+    // equivalent axe/pick parts) render as a single complete model.
+    const buildUnifiedWeaponMesh = (
+      parts: { geo: THREE.BufferGeometry; pos?: [number, number, number]; rot?: [number, number, number]; scale?: [number, number, number] }[],
+      material: THREE.Material,
+    ) => {
+      const transformed = parts.map((part) => {
+        const g = part.geo.clone()
+        const pos = new THREE.Vector3(...(part.pos ?? [0, 0, 0]))
+        const euler = new THREE.Euler(...(part.rot ?? [0, 0, 0]))
+        const quat = new THREE.Quaternion().setFromEuler(euler)
+        const scl = new THREE.Vector3(...(part.scale ?? [1, 1, 1]))
+        const mat = new THREE.Matrix4().compose(pos, quat, scl)
+        g.applyMatrix4(mat)
+        return g
+      })
+      const merged = mergeGeometries(transformed, false)
+      transformed.forEach((g) => g.dispose())
+      if (!merged) {
+        const fallback = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), material)
+        fallback.visible = false
+        weaponGroup.add(fallback)
+        return fallback
+      }
+      const mesh = new THREE.Mesh(merged, material)
+      mesh.castShadow = true
+      mesh.receiveShadow = false
+      mesh.visible = false
+      weaponGroup.add(mesh)
+      return mesh
+    }
 
-    // Sword: full blade, sharpened edges, fuller groove, crossguard, wrapped grip, pommel.
-    const swordBlade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.74, 0.13), weaponMat)
-    swordBlade.position.set(0, 0.52, 0)
-    swordBlade.castShadow = true
-    swordBlade.visible = false
-    weaponGroup.add(swordBlade)
-
-    const swordEdgeL = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.76, 0.14), weaponMat)
-    swordEdgeL.position.set(0.024, 0.52, 0)
-    swordEdgeL.castShadow = true
-    swordEdgeL.visible = false
-    weaponGroup.add(swordEdgeL)
-
-    const swordEdgeR = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.76, 0.14), weaponMat)
-    swordEdgeR.position.set(-0.024, 0.52, 0)
-    swordEdgeR.castShadow = true
-    swordEdgeR.visible = false
-    weaponGroup.add(swordEdgeR)
-
-    const swordTip = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.2, 4), weaponMat)
-    swordTip.position.set(0, 0.98, 0)
-    swordTip.rotation.y = Math.PI / 4
-    swordTip.castShadow = true
-    swordTip.visible = false
-    weaponGroup.add(swordTip)
-
-    const swordFuller = new THREE.Mesh(
-      new THREE.BoxGeometry(0.012, 0.52, 0.03),
-      new THREE.MeshStandardMaterial({ color: 0xb8c2cc, roughness: 0.42, metalness: 0.85 })
-    )
-    swordFuller.position.set(0, 0.52, 0.02)
-    swordFuller.castShadow = true
-    swordFuller.visible = false
-    weaponGroup.add(swordFuller)
-
-    const swordGuardMat = new THREE.MeshStandardMaterial({ color: 0x4a3523, roughness: 0.72, metalness: 0.35 })
-    const swordGuard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.045, 0.09), swordGuardMat)
-    swordGuard.position.set(0, 0.18, 0)
-    swordGuard.castShadow = true
-    swordGuard.visible = false
-    weaponGroup.add(swordGuard)
-
-    const swordQuillonL = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.12, 7), swordGuardMat)
-    swordQuillonL.position.set(0.2, 0.18, 0)
-    swordQuillonL.rotation.z = -Math.PI / 2
-    swordQuillonL.castShadow = true
-    swordQuillonL.visible = false
-    weaponGroup.add(swordQuillonL)
-
-    const swordQuillonR = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.12, 7), swordGuardMat)
-    swordQuillonR.position.set(-0.2, 0.18, 0)
-    swordQuillonR.rotation.z = Math.PI / 2
-    swordQuillonR.castShadow = true
-    swordQuillonR.visible = false
-    weaponGroup.add(swordQuillonR)
-
-    const swordGrip = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.038, 0.4, 12), gripMat)
-    swordGrip.position.set(0, -0.15, 0)
-    swordGrip.castShadow = true
-    swordGrip.visible = false
-    weaponGroup.add(swordGrip)
-
-    const swordPommel = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 10), swordGuardMat)
-    swordPommel.position.set(0, -0.42, 0)
-    swordPommel.castShadow = true
-    swordPommel.visible = false
-    weaponGroup.add(swordPommel)
-
-    // Axe: complete broad head with blade cheek, bearded edge, socket and back spike.
-    const axeHeadSocket = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.2, 12), weaponMat)
-    axeHeadSocket.rotation.z = Math.PI / 2
-    axeHeadSocket.position.set(0.01, 0.22, 0)
-    axeHeadSocket.castShadow = true
-    axeHeadSocket.visible = false
-    weaponGroup.add(axeHeadSocket)
+    const swordUnified = buildUnifiedWeaponMesh([
+      { geo: new THREE.CylinderGeometry(0.041, 0.038, 0.44, 12), pos: [0, -0.12, 0] },
+      { geo: new THREE.BoxGeometry(0.35, 0.05, 0.09), pos: [0, 0.15, 0] },
+      { geo: new THREE.ConeGeometry(0.03, 0.11, 8), pos: [0.2, 0.15, 0], rot: [0, 0, -Math.PI / 2] },
+      { geo: new THREE.ConeGeometry(0.03, 0.11, 8), pos: [-0.2, 0.15, 0], rot: [0, 0, Math.PI / 2] },
+      { geo: new THREE.BoxGeometry(0.068, 0.76, 0.13), pos: [0, 0.58, 0] },
+      { geo: new THREE.ConeGeometry(0.07, 0.2, 4), pos: [0, 1.06, 0], rot: [0, Math.PI / 4, 0] },
+      { geo: new THREE.SphereGeometry(0.06, 12, 10), pos: [0, -0.4, 0], scale: [1, 0.95, 1] },
+    ], weaponMat)
 
     const axeBladeShape = new THREE.Shape()
     axeBladeShape.moveTo(-0.03, -0.24)
@@ -1373,46 +1368,22 @@ export default function GameCanvas() {
     axeBladeShape.quadraticCurveTo(0.26, -0.34, -0.03, -0.24)
     const axeBladeGeo = new THREE.ExtrudeGeometry(axeBladeShape, { depth: 0.08, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2 })
     axeBladeGeo.center()
-    const axeBlade = new THREE.Mesh(axeBladeGeo, weaponMat)
-    axeBlade.position.set(0.24, 0.22, 0)
-    axeBlade.castShadow = true
-    axeBlade.visible = false
-    weaponGroup.add(axeBlade)
+    const axeUnified = buildUnifiedWeaponMesh([
+      { geo: new THREE.CylinderGeometry(0.038, 0.04, 0.84, 10), pos: [0, -0.18, 0] },
+      { geo: new THREE.CylinderGeometry(0.075, 0.075, 0.2, 12), pos: [0.01, 0.22, 0], rot: [0, 0, Math.PI / 2] },
+      { geo: axeBladeGeo, pos: [0.24, 0.22, 0] },
+      { geo: new THREE.ConeGeometry(0.07, 0.24, 8), pos: [0.2, 0.06, 0], rot: [0, 0, -0.25] },
+      { geo: new THREE.BoxGeometry(0.18, 0.11, 0.11), pos: [-0.14, 0.22, 0] },
+      { geo: new THREE.ConeGeometry(0.055, 0.24, 8), pos: [-0.28, 0.22, 0], rot: [0, 0, Math.PI / 2] },
+    ], weaponMat)
+    axeBladeGeo.dispose()
 
-    const axeBeard = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 8), weaponMat)
-    axeBeard.position.set(0.2, 0.06, 0)
-    axeBeard.rotation.z = -0.25
-    axeBeard.castShadow = true
-    axeBeard.visible = false
-    weaponGroup.add(axeBeard)
-
-    const axePoll = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.11, 0.11), weaponMat)
-    axePoll.position.set(-0.14, 0.22, 0)
-    axePoll.castShadow = true
-    axePoll.visible = false
-    weaponGroup.add(axePoll)
-
-    const axeSpike = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.24, 8), weaponMat)
-    axeSpike.position.set(-0.28, 0.22, 0)
-    axeSpike.rotation.z = Math.PI / 2
-    axeSpike.castShadow = true
-    axeSpike.visible = false
-    weaponGroup.add(axeSpike)
-
-    // Pickaxe: curved two-pointed head (thicker spike on each side)
-    const pickHeadBarGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8)
-    const pickHeadBar = new THREE.Mesh(pickHeadBarGeo, weaponMat)
-    pickHeadBar.rotation.z = Math.PI / 2
-    pickHeadBar.position.set(0, 0.2, 0)
-    pickHeadBar.castShadow = true
-    pickHeadBar.visible = false
-    weaponGroup.add(pickHeadBar)
-    const pickTip2 = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.2, 8), weaponMat)
-    pickTip2.position.set(-0.28, 0.2, 0)
-    pickTip2.rotation.z = Math.PI / 2
-    pickTip2.castShadow = true
-    pickTip2.visible = false
-    weaponGroup.add(pickTip2)
+    const pickUnified = buildUnifiedWeaponMesh([
+      { geo: new THREE.CylinderGeometry(0.037, 0.039, 0.84, 10), pos: [0, -0.18, 0] },
+      { geo: new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8), pos: [0, 0.2, 0], rot: [0, 0, Math.PI / 2] },
+      { geo: new THREE.ConeGeometry(0.055, 0.22, 8), pos: [0.28, 0.2, 0], rot: [0, 0, -Math.PI / 2] },
+      { geo: new THREE.ConeGeometry(0.055, 0.2, 8), pos: [-0.28, 0.2, 0], rot: [0, 0, Math.PI / 2] },
+    ], weaponMat)
 
     // --- Cosmetic held-item meshes ---
     // Shirt: a 3D shirt shape held up in front of the player — torso panel
@@ -2889,9 +2860,10 @@ export default function GameCanvas() {
     }
 
     function findLoadedCaveForOrc() {
-      const candidates: { x: number; y: number; z: number; radius: number; yaw: number; d2: number }[] = []
+      const candidates: { x: number; y: number; z: number; radius: number; yaw: number; depth: number; canSpawnOrc: boolean; d2: number }[] = []
       for (const c of chunks.values()) {
         for (const cave of c.caves) {
+          if (!cave.canSpawnOrc) continue
           const dx = cave.x - playerPos.x
           const dz = cave.z - playerPos.z
           const d2 = dx * dx + dz * dz
@@ -2908,11 +2880,13 @@ export default function GameCanvas() {
       if (!isDayTimeValue(timeOfDayAcc)) return false
       if (orcs.some(o => o.id === id) || orcs.length >= MAX_ORCS) return false
       const cave = typeof sx === 'number' && typeof sz === 'number' ? caveSpecNear(sx, sz, ORC_LEASH_RADIUS) : findLoadedCaveForOrc()
-      if (!cave) return false
-      const inwardX = Math.sin(cave.yaw) * cave.radius * 0.25
-      const inwardZ = Math.cos(cave.yaw) * cave.radius * 0.25
-      const x = sx ?? (cave.x + inwardX)
-      const z = sz ?? (cave.z + inwardZ)
+      if (!cave || !cave.canSpawnOrc) return false
+      // Spawn just outside the mouth so the ORC guards the entrance territory,
+      // not deep inside the cave tunnel.
+      const mouthOutX = Math.sin(cave.yaw) * cave.radius * 0.92
+      const mouthOutZ = Math.cos(cave.yaw) * cave.radius * 0.92
+      const x = sx ?? (cave.x + mouthOutX)
+      const z = sz ?? (cave.z + mouthOutZ)
       if (Math.hypot(x - cave.x, z - cave.z) > ORC_LEASH_RADIUS) return false
       const y = heightAt(x, z)
       orcs.push(createOrc(x, y, z, id, cave.x, cave.z, ORC_LEASH_RADIUS))
@@ -4094,16 +4068,21 @@ export default function GameCanvas() {
     }
 
     function spawnGoblin(id = makeNetId('g'), announce = true, sx?: number, sz?: number) {
-      if (!isDayTimeValue(timeOfDayAcc)) return
-      if (biomeAt(playerPos.x, playerPos.z) !== 'forest' && (typeof sx !== 'number' || typeof sz !== 'number')) return
-      if (goblins.some(g => g.id === id) || goblins.length >= MAX_GOBLINS) return
-      const spawn = findBiomeSpawnPoint('forest', 38, 18, sx, sz)
-      if (!spawn) return
+      if (!isDayTimeValue(timeOfDayAcc)) return false
+      if (goblins.some(g => g.id === id) || goblins.length >= MAX_GOBLINS) return false
+      // Prefer forest ambushes, but if no valid forest point is found nearby,
+      // fall back to a generic surface spawn so daytime still gets at least one
+      // goblin pressure event per cycle.
+      const preferred = findBiomeSpawnPoint('forest', 38, 18, sx, sz)
+      const fallback = findSurfaceSpawnPoint(38, 18, sx, sz)
+      const spawn = preferred ?? fallback
+      if (!spawn) return false
       const { x, z } = spawn
       const y = heightAt(x, z)
       goblins.push(createGoblin(x, y, z, id))
       if (announce) queueWorldEvent('enemy_spawn', { id, kind: 'goblin', x, y, z })
-      useGame.getState().showToast('🟢 A forest goblin eyes your loot!')
+      useGame.getState().showToast('🟢 A goblin eyes your loot!')
+      return true
     }
 
     function spawnWorm(id = makeNetId('w'), announce = true, sx?: number, sz?: number) {
@@ -4146,10 +4125,14 @@ export default function GameCanvas() {
     let vampireSpawnTimer = VAMPIRE_SPAWN_MIN_DELAY
     // ORC is a rare daytime cave guardian, tethered to its cave entrance.
     let orcSpawnTimer = 140 + Math.random() * 90
-    // Goblin first sighting happens a few minutes in; respawns are even rarer.
-    let goblinSpawnTimer = 180 + Math.random() * 120
+    let goblinSpawnTimer = 45 + Math.random() * 60
     // Desert day boss timer. It only ticks while the player is in desert daylight.
-    let wormSpawnTimer = 95 + Math.random() * 75
+    let wormSpawnTimer = 80 + Math.random() * 60
+    const initialPhaseInfo = phaseInfoForTimeOfDay(timeOfDayAcc)
+    let nightElapsedSec = initialPhaseInfo.phase === 'night' ? NIGHT_LENGTH_SEC - initialPhaseInfo.secondsLeft : 0
+    let dayElapsedSec = initialPhaseInfo.phase === 'day' ? DAY_LENGTH_SEC - initialPhaseInfo.secondsLeft : 0
+    let spawnedVampireThisNight = false
+    let spawnedGoblinThisDay = false
     let bob = 0
 
     // ---------------------------------------------------------------------
@@ -4166,6 +4149,14 @@ export default function GameCanvas() {
       target: THREE.Vector3
       yaw: number
       targetYaw: number
+      armL: THREE.Object3D
+      armR: THREE.Object3D
+      legL: THREE.Object3D
+      legR: THREE.Object3D
+      torso: THREE.Object3D
+      head: THREE.Object3D
+      walkPhase: number
+      moveBlend: number
       // used to detect stalled heartbeat -> fade the ghost out
       lastSeen: number
       dead: boolean
@@ -4259,6 +4250,14 @@ export default function GameCanvas() {
         target: new THREE.Vector3(x, y, z),
         yaw,
         targetYaw: yaw,
+        armL,
+        armR,
+        legL,
+        legR,
+        torso,
+        head,
+        walkPhase: Math.random() * Math.PI * 2,
+        moveBlend: 0,
         lastSeen: performance.now(),
         dead: y < -9000,
       }
@@ -4282,10 +4281,9 @@ export default function GameCanvas() {
       ghosts.delete(id)
     }
 
-    // Called by play-client every heartbeat cycle (~3s) with the latest
-    // server snapshot of other players. Creates meshes for newcomers,
-    // updates target positions for existing ones, and removes anyone who
-    // left.
+    // Called by play-client every heartbeat cycle with the latest server
+    // snapshot of other players. Creates meshes for newcomers, updates target
+    // positions for existing ones, and removes anyone who left.
     ;(window as any).__nightfallUpdateGhosts = (players: Array<{
       id: string; name: string; posX: number; posY: number; posZ: number; yaw: number
     }>) => {
@@ -4299,6 +4297,15 @@ export default function GameCanvas() {
         if (!g) {
           g = createGhost(p.id, p.name || 'Survivor', p.posX, p.posY, p.posZ, p.yaw)
         } else if (!isDeadGhost) {
+          const wasDead = g.dead
+          if (wasDead) {
+            // Respawn transition: snap to the new position once so the avatar
+            // doesn't glide up from the hidden graveyard sentinel Y value.
+            g.pos.set(p.posX, p.posY, p.posZ)
+            g.mesh.position.set(p.posX, p.posY - PLAYER_HEIGHT, p.posZ)
+            g.walkPhase = 0
+            g.moveBlend = 0
+          }
           g.target.set(p.posX, p.posY, p.posZ)
           g.targetYaw = p.yaw
         }
@@ -4520,12 +4527,19 @@ export default function GameCanvas() {
 
     const raycaster = new THREE.Raycaster()
 
+    function hotbarTorchSlots(state = useGame.getState()) {
+      const slots: number[] = []
+      for (let i = 0; i < 5; i++) {
+        const slot = state.inventory[i]
+        if (slot?.id === 'torch' && slot.count > 0) slots.push(i)
+      }
+      return slots
+    }
+
     function playerHasActiveTorch(state = useGame.getState()) {
-      // Only torches the player can actively use should burn down:
-      // - offhand torch, OR
-      // - any torch sitting in quick-access hotbar slots 1..5 (index 0..4).
-      if (state.offhandItem === 'torch') return true
-      return state.inventory.slice(0, 5).some(slot => slot?.id === 'torch' && slot.count > 0)
+      // Active durability pool includes hotbar torches and an equipped offhand torch.
+      // Inventory slots 6+ remain preserved until moved into hotbar/offhand.
+      return hotbarTorchSlots(state).length > 0 || state.offhandItem === 'torch'
     }
 
     function persistTorchDurability(force = false) {
@@ -4541,9 +4555,14 @@ export default function GameCanvas() {
       try { (window as any).__nightfallPersistGame?.() } catch {}
     }
 
-    function consumeExpiredTorch(state = useGame.getState(), message = '🕯️ Your torch burned out.') {
-      if (state.offhandItem === 'torch') state.setOffhand(null)
-      else state.removeItem('torch', 1)
+    function consumeExpiredTorch(state = useGame.getState(), message = '🕯️ Your active torches burned out.') {
+      const hotbarSlots = hotbarTorchSlots(state)
+      const hadOffhandTorch = state.offhandItem === 'torch'
+      if (hotbarSlots.length === 0 && !hadOffhandTorch) return
+      const inv = [...state.inventory]
+      for (const idx of hotbarSlots) inv[idx] = { id: null, count: 0 }
+      state.setInventory(inv)
+      if (hadOffhandTorch) state.setOffhand(null)
       state.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
       state.showToast(message)
       persistTorchDurability(true)
@@ -4565,9 +4584,9 @@ export default function GameCanvas() {
         offhandTorchGroup.visible = false
       }
 
-      // Torches share a single durability pool, but only actively accessible
-      // torches should consume it (offhand + hotbar slots 1..5).
-      // Torches parked deeper in inventory (slots 6+) are preserved.
+      // Torches in hotbar slots 1..5 and the equipped offhand torch share one
+      // durability pool and burn together. Inventory slots 6+ stay preserved
+      // until moved into active use (hotbar/offhand).
       const hasActiveTorch = state.mode !== 'dead' && playerHasActiveTorch(state)
       if (!paused && hasActiveTorch) {
         const expired = state.damageTorchDurability(dt)
@@ -4676,15 +4695,28 @@ export default function GameCanvas() {
       // Edge ring follows camera so horizon edge is always visible far away
       edgeRing.position.set(camera.position.x, -0.8, camera.position.z)
 
-      // Night state transitions
+      // Track elapsed time in each phase so we can guarantee baseline spawns.
+      if (isNightNow) {
+        nightElapsedSec += dt
+      } else {
+        dayElapsedSec += dt
+      }
+
+      // Night/day transitions
       if (isNightNow !== wasNight) {
         wasNight = isNightNow
         if (!isNightNow) {
           // dawn: night monsters retreat, while daytime biome predators may spawn.
           clearDaytimeHostiles()
+          dayElapsedSec = 0
+          spawnedGoblinThisDay = false
+          goblinSpawnTimer = 35 + Math.random() * 45
           state.showToast('🌅 Dawn breaks. The horde retreats.')
         } else {
           clearDayOnlyHostiles()
+          nightElapsedSec = 0
+          spawnedVampireThisNight = false
+          vampireSpawnTimer = 20 + Math.random() * 28
           state.showToast('🌙 Nightfall... they are coming.')
         }
       }
@@ -4790,8 +4822,12 @@ export default function GameCanvas() {
         // is invisible anyway so this is purely for weapon-aim & drop dir.
         playerYaw = yaw
 
-        playerVel.x = wish.x
-        playerVel.z = wish.z
+        // Smooth horizontal acceleration/deceleration to prevent jittery starts,
+        // hard snaps, and micro-teleports on unstable frame times.
+        const accel = (onGround ? 17 : 8) * dt
+        const velLerp = Math.max(0, Math.min(1, accel))
+        playerVel.x += (wish.x - playerVel.x) * velLerp
+        playerVel.z += (wish.z - playerVel.z) * velLerp
         playerVel.y -= GRAVITY * dt
         if (input.jump && onGround && !isPlayerStunned) {
           playerVel.y = JUMP_VELOCITY
@@ -4949,7 +4985,8 @@ export default function GameCanvas() {
         playerMesh.rotation.y = playerYaw + Math.PI
 
         // Walking animation: swing legs and arms
-        const moving = wish.lengthSq() > 0 && onGround
+        const horizontalVel = Math.hypot(playerVel.x, playerVel.z)
+        const moving = horizontalVel > 0.12 && onGround
         bob += dt * (moving ? (input.sprint ? 12 : 8) : 0)
         const swing = moving ? Math.sin(bob) * 0.7 : 0
         legL.rotation.x = swing
@@ -4966,7 +5003,7 @@ export default function GameCanvas() {
         // visible ahead).  Walk-bob adds a subtle vertical oscillation so the
         // view feels grounded while moving.
         const eyeY = feetY + PLAYER_HEIGHT - 0.12
-        const walking = wish.lengthSq() > 0 && onGround
+        const walking = moving
         const bobAmt = walking ? Math.sin(bob * 2) * 0.04 : 0
         const fx = Math.sin(yaw)
         const fz = -Math.cos(yaw)
@@ -5006,23 +5043,9 @@ export default function GameCanvas() {
           weaponHead.visible = false
           pickSpike.visible = false
           pickBack.visible = false
-          swordBlade.visible = false
-          swordEdgeL.visible = false
-          swordEdgeR.visible = false
-          swordTip.visible = false
-          swordFuller.visible = false
-          swordGuard.visible = false
-          swordQuillonL.visible = false
-          swordQuillonR.visible = false
-          swordGrip.visible = false
-          swordPommel.visible = false
-          axeHeadSocket.visible = false
-          axeBlade.visible = false
-          axeBeard.visible = false
-          axePoll.visible = false
-          axeSpike.visible = false
-          pickHeadBar.visible = false
-          pickTip2.visible = false
+          swordUnified.visible = false
+          axeUnified.visible = false
+          pickUnified.visible = false
           heldLogGroup.visible = false
           heldRockMesh.visible = false
           heldSapGroup.visible = false
@@ -5038,41 +5061,17 @@ export default function GameCanvas() {
           heldGlowstoneGroup.visible = false
 
           if (eq === 'stone_pickaxe' || eq === 'iron_pickaxe') {
-            // Wooden handle + grip + two-pointed pickaxe head
-            handleMesh.visible = true
-            gripWrap.visible = true
-            handleMesh.scale.set(1, 1, 1)
+            // Unified pickaxe model (single cohesive mesh)
             weaponMat.color.set(eq === 'iron_pickaxe' ? 0xd8dde2 : 0xa1a1aa)
-            pickHeadBar.visible = true
-            pickSpike.visible = true
-            pickTip2.visible = true
+            pickUnified.visible = true
           } else if (eq === 'stone_sword' || eq === 'iron_sword') {
-            // Complete sword model: full blade + edges/fuller + crossguard + grip + pommel.
-            handleMesh.visible = false
-            gripWrap.visible = false
+            // Unified sword model (blade + guard + handle in one mesh)
             weaponMat.color.set(eq === 'iron_sword' ? 0xe8eef5 : 0xb5b7bd)
-            ;(swordFuller.material as THREE.MeshStandardMaterial).color.set(eq === 'iron_sword' ? 0xc7d2de : 0x8f949a)
-            swordBlade.visible = true
-            swordEdgeL.visible = true
-            swordEdgeR.visible = true
-            swordTip.visible = true
-            swordFuller.visible = true
-            swordGuard.visible = true
-            swordQuillonL.visible = true
-            swordQuillonR.visible = true
-            swordGrip.visible = true
-            swordPommel.visible = true
+            swordUnified.visible = true
           } else if (eq === 'stone_axe' || eq === 'iron_axe') {
-            // Complete axe model: haft + socket + broad bearded blade + poll + rear spike.
-            handleMesh.visible = true
-            gripWrap.visible = true
-            handleMesh.scale.set(1.02, 1.04, 1.02)
+            // Unified axe model (single cohesive mesh)
             weaponMat.color.set(eq === 'iron_axe' ? 0xc7ced6 : 0x9d7d55)
-            axeHeadSocket.visible = true
-            axeBlade.visible = true
-            axeBeard.visible = true
-            axePoll.visible = true
-            axeSpike.visible = true
+            axeUnified.visible = true
           } else if (eq === 'log') {
             heldLogGroup.visible = true
           } else if (eq === 'wood') {
@@ -5342,12 +5341,20 @@ export default function GameCanvas() {
           }
         }
 
-        // Vampire spawning (slower, rarer than zombies — boss encounters)
+        // Vampire spawning (rarer than zombies, but guaranteed at least once/night)
         if (isNightNow && isWorldAuthority) {
+          if (!spawnedVampireThisNight && vampires.length > 0) spawnedVampireThisNight = true
           vampireSpawnTimer -= dt
-          if (vampireSpawnTimer <= 0) {
-            vampireSpawnTimer = VAMPIRE_SPAWN_MIN_DELAY + Math.random() * VAMPIRE_SPAWN_RANDOM_DELAY
+          if (!spawnedVampireThisNight && nightElapsedSec >= VAMPIRE_FORCED_FIRST_SPAWN_SEC && vampires.length === 0) {
+            const before = vampires.length
             spawnVampire()
+            if (vampires.length > before) spawnedVampireThisNight = true
+            vampireSpawnTimer = VAMPIRE_SPAWN_MIN_DELAY + Math.random() * VAMPIRE_SPAWN_RANDOM_DELAY
+          } else if (vampireSpawnTimer <= 0) {
+            vampireSpawnTimer = VAMPIRE_SPAWN_MIN_DELAY + Math.random() * VAMPIRE_SPAWN_RANDOM_DELAY
+            const before = vampires.length
+            spawnVampire()
+            if (vampires.length > before) spawnedVampireThisNight = true
           }
         }
 
@@ -5626,7 +5633,7 @@ export default function GameCanvas() {
         if (!isNightNow && playerInDesert && isWorldAuthority) wormSpawnTimer -= dt
         if (!isNightNow && playerInDesert && isWorldAuthority && wormSpawnTimer <= 0) {
           const spawned = spawnWorm()
-          wormSpawnTimer = spawned ? 320 + Math.random() * 220 : 45 + Math.random() * 45
+          wormSpawnTimer = spawned ? 270 + Math.random() * 180 : 40 + Math.random() * 35
         }
         for (let i = worms.length - 1; i >= 0; i--) {
           const w = worms[i]
@@ -5771,18 +5778,23 @@ export default function GameCanvas() {
         }
 
         // --- Goblin spawning & AI ---
-        // Goblins appear only during the day in forest biomes, sprint in, steal
-        // one inventory stack, then bolt. Kill before they escape to recover it.
-        const playerInForest = biomeAt(playerPos.x, playerPos.z) === 'forest'
-        if (!isNightNow && playerInForest && isWorldAuthority) goblinSpawnTimer -= dt
-        if (!isNightNow && playerInForest && isWorldAuthority && goblinSpawnTimer <= 0) {
-          // Next goblin sighting: 4–8 minutes later, and only while in forests.
-          goblinSpawnTimer = 240 + Math.random() * 240
-          spawnGoblin()
+        // Daytime thief pressure with a guaranteed first encounter each day cycle.
+        if (!isNightNow && isWorldAuthority) {
+          if (!spawnedGoblinThisDay && goblins.length > 0) spawnedGoblinThisDay = true
+          goblinSpawnTimer -= dt
+          if (!spawnedGoblinThisDay && dayElapsedSec >= GOBLIN_FORCED_FIRST_SPAWN_SEC && goblins.length === 0) {
+            const spawned = spawnGoblin()
+            if (spawned) spawnedGoblinThisDay = true
+            goblinSpawnTimer = GOBLIN_SPAWN_MIN_DELAY + Math.random() * GOBLIN_SPAWN_RANDOM_DELAY
+          } else if (goblinSpawnTimer <= 0) {
+            goblinSpawnTimer = GOBLIN_SPAWN_MIN_DELAY + Math.random() * GOBLIN_SPAWN_RANDOM_DELAY
+            const spawned = spawnGoblin()
+            if (spawned) spawnedGoblinThisDay = true
+          }
         }
         for (let i = goblins.length - 1; i >= 0; i--) {
           const gb = goblins[i]
-          if (isNightNow || biomeAt(gb.pos.x, gb.pos.z) !== 'forest') {
+          if (isNightNow) {
             removeGoblin(gb)
             goblins.splice(i, 1)
             continue
@@ -6141,30 +6153,61 @@ export default function GameCanvas() {
         if (acc > 0.5) { acc = 0; updateChunks(playerPos.x, playerPos.z) }
       }
 
-      // Ghost interpolation — smoothly ease each ghost toward its latest
-      // target pose so the ~3s polling interval doesn't feel choppy.
+      // Ghost interpolation + locomotion animation.
       if (ghosts.size > 0) {
-        const easePos = 1 - Math.pow(0.001, dt) // ~3.3/sec
+        const easePos = 1 - Math.pow(0.00025, dt)
         const easeYaw = 1 - Math.pow(0.004, dt)
+        const blendRate = Math.min(1, dt * 10)
         for (const g of ghosts.values()) {
           if (g.dead) {
             g.mesh.visible = false
             continue
           }
           g.mesh.visible = true
-          g.pos.x += (g.target.x - g.pos.x) * easePos
-          g.pos.y += (g.target.y - g.pos.y) * easePos
-          g.pos.z += (g.target.z - g.pos.z) * easePos
+
+          const preX = g.pos.x
+          const preZ = g.pos.z
+          const toTargetX = g.target.x - g.pos.x
+          const toTargetZ = g.target.z - g.pos.z
+          // Large corrections (lag spikes/server rewind) snap once so ghosts
+          // don't rubber-band across the map for several seconds.
+          if (toTargetX * toTargetX + toTargetZ * toTargetZ > 32 * 32) {
+            g.pos.set(g.target.x, g.target.y, g.target.z)
+          } else {
+            g.pos.x += toTargetX * easePos
+            g.pos.y += (g.target.y - g.pos.y) * easePos
+            g.pos.z += toTargetZ * easePos
+          }
+
           // Angle lerp through shortest arc
           let dyaw = g.targetYaw - g.yaw
           while (dyaw > Math.PI) dyaw -= Math.PI * 2
           while (dyaw < -Math.PI) dyaw += Math.PI * 2
           g.yaw += dyaw * easeYaw
-          // Place the mesh: posY from the server is the player's EYE level
-          // (matches playerPos.y).  Our ghost model is built feet-up so we
-          // shift it down by PLAYER_HEIGHT.
+
+          // Place the mesh: posY from the server is the player's EYE level.
           g.mesh.position.set(g.pos.x, g.pos.y - PLAYER_HEIGHT, g.pos.z)
           g.mesh.rotation.y = g.yaw
+
+          // Third-person walk cycle visible to multiplayer peers.
+          const dx = g.pos.x - preX
+          const dz = g.pos.z - preZ
+          const horizontalSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 1e-4)
+          const targetBlend = Math.min(1, horizontalSpeed / (SPRINT_SPEED * 0.95))
+          g.moveBlend += (targetBlend - g.moveBlend) * blendRate
+          if (horizontalSpeed > 0.05) {
+            g.walkPhase += dt * (5.2 + horizontalSpeed * 0.55)
+          }
+          const s = Math.sin(g.walkPhase)
+          const stride = s * 0.95 * g.moveBlend
+          g.legL.rotation.x = stride
+          g.legR.rotation.x = -stride
+          g.armL.rotation.x = -stride * 0.72
+          g.armR.rotation.x = stride * 0.72
+          g.torso.position.y = 1.1 + Math.abs(s) * 0.06 * g.moveBlend
+          g.torso.rotation.z = stride * 0.05
+          g.head.rotation.z = -stride * 0.035
+          g.head.rotation.y = Math.sin(g.walkPhase * 0.45) * 0.03 * g.moveBlend
         }
       }
 
@@ -6195,10 +6238,7 @@ export default function GameCanvas() {
         const s = useGame.getState()
         const expired = s.damageTorchDurability(TORCH_ATTACK_DURABILITY_COST_SEC)
         if (expired) {
-          s.removeItem('torch', 1)
-          s.setTorchDurability(TORCH_MAX_DURABILITY_SEC)
-          s.showToast('🔥 Final torch strike! It burns out.')
-          persistTorchDurability(true)
+          consumeExpiredTorch(s, '🔥 Final torch strike! Your active torches burn out together.')
         } else {
           persistTorchDurability(false)
         }
