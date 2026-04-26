@@ -260,7 +260,7 @@ export default function PlayClient() {
     // the exposed callback pointed at the latest closure.
   })
 
-  // Presence heartbeat loop: every 3s, send our position and receive ghosts
+  // Presence heartbeat loop: frequent updates reduce ghost teleport/jitter.
   useEffect(() => {
     if (!authed) return
     const sid = serverIdRef.current
@@ -305,7 +305,7 @@ export default function PlayClient() {
       }
     }
     beat()
-    const interval = setInterval(beat, 3000)
+    const interval = setInterval(beat, 1000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [authed])
 
