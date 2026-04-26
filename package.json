@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/write-build-version.cjs && next build",
+    "build": "prisma generate && node scripts/write-build-version.cjs && next build",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint",
     "desktop:dev": "electron .",
